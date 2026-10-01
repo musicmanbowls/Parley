@@ -33,6 +33,8 @@ Parley isn't in Dalamud's official plugin list, so you add Parley's own list onc
 
 You need Final Fantasy XIV started through XIVLauncher, with plugins working (you can open `/xlplugins` in game).
 
+> **Had a test build from a zip?** Remove it first, so Dalamud doesn't find two copies of Parley. In `/xlplugins` → **Installed Dev Plugins**, turn Parley off. Then in `/xlsettings` → **Experimental**, click the bin icon beside Parley's path under **Dev Plugin Locations** and click **Save**. Your chat history and settings carry over. If Parley still shows up twice, restart the game.
+
 ### 1. Add Parley's plugin list
 
 1. In game, type `/xlsettings` and open the **Experimental** tab.
