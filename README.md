@@ -142,3 +142,15 @@ dotnet test tests/Parley.Tests
 ```
 
 The plugin package lands in `Parley/bin/Release/Parley/latest.zip`. The Umbra companion builds against the Umbra you have installed. `tests/Parley.UiHarness` draws Parley's real windows outside the game, which is where the pictures above come from.
+
+## Thanks
+
+- [Dalamud](https://github.com/goatcorp/Dalamud) and [FFXIVClientStructs](https://github.com/aers/FFXIVClientStructs), which every plugin stands on.
+- [Chat 2](https://github.com/Infiziert90/ChatTwo), whose code showed how to bring up the game's own item tooltip.
+- [Umbra](https://github.com/una-xiv/umbra), for the toolbar the optional widget lives on.
+
+## License
+
+Copyright © 2026 MusicManBowls.
+
+Parley is free software under the [GNU Affero General Public License v3.0](LICENSE). You can use, study, change and share it; if you share a changed version, it has to stay open source under the same license.
