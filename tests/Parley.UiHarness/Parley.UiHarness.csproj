@@ -1,0 +1,62 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Draws Parley's real window code against the same ImGui build Dalamud ships,
+    with no game running, and writes what it draws to PNG files.
+
+    The window code is compiled in from the plugin's sources. Everything it
+    needs from the game or from Dalamud's services is replaced by the stand-ins
+    in Fakes.cs. Dalamud itself is only used for plain types such as Window.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <LangVersion>14.0</LangVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Parley.UiHarness</RootNamespace>
+    <AssemblyName>Parley.UiHarness</AssemblyName>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+
+    <DalamudLibPath Condition="'$(DalamudLibPath)' == '' And Exists('$(HOME)/.xlcore/dalamud/Hooks/dev/Dalamud.dll')">$(HOME)/.xlcore/dalamud/Hooks/dev</DalamudLibPath>
+    <DalamudLibPath Condition="'$(DalamudLibPath)' == ''">$(APPDATA)/XIVLauncher/addon/Hooks/dev</DalamudLibPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\Parley\Core\**\*.cs" Link="Plugin\Core\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\..\Parley\Ui\MainWindow*.cs" Link="Plugin\Ui\%(Filename)%(Extension)" />
+    <Compile Include="..\..\Parley\Ui\SettingsWindow.cs" Link="Plugin\Ui\SettingsWindow.cs" />
+    <Compile Include="..\..\Parley\Ui\ThemeManager.cs" Link="Plugin\Ui\ThemeManager.cs" />
+    <Compile Include="..\..\Parley\Ui\Painter.cs" Link="Plugin\Ui\Painter.cs" />
+    <Compile Include="..\..\Parley\Ui\SeStringText.cs" Link="Plugin\Ui\SeStringText.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Loaded from Dalamud's own folder at run time; see Program.Main. -->
+    <Reference Include="Dalamud"><HintPath>$(DalamudLibPath)/Dalamud.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Lumina"><HintPath>$(DalamudLibPath)/Lumina.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Lumina.Excel"><HintPath>$(DalamudLibPath)/Lumina.Excel.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The ImGui binding and its native library are copied, and have to be.
+      The binding finds the native library two ways: by name, beside itself,
+      and by path, beside whoever touches it first, which here is this
+      program. If those are two folders the library is loaded twice, each copy
+      with its own idea of the current ImGui context, and the first call that
+      lands in the wrong one crashes.
+    -->
+    <Reference Include="Dalamud.Bindings.ImGui"><HintPath>$(DalamudLibPath)/Dalamud.Bindings.ImGui.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="HexaGen.Runtime"><HintPath>$(DalamudLibPath)/HexaGen.Runtime.dll</HintPath><Private>true</Private></Reference>
+    <None Include="$(DalamudLibPath)/cimgui.dll" Link="cimgui.dll" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+  <Target Name="CheckHostReferences" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(DalamudLibPath)/Dalamud.dll')" Text="Dalamud was not found. Set DalamudLibPath to the folder containing Dalamud.dll." />
+  </Target>
+</Project>

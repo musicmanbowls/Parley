@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Installing Parley</title>
+<style>
+  :root {
+    --ink: #1f2328;
+    --muted: #5b636e;
+    --line: #d8dde3;
+    --paper: #ffffff;
+    --panel: #f5f7fa;
+    --accent: #6b3fa0;
+    --callout: #ff9e1c;
+    --warn-bg: #fff6e5;
+    --warn-line: #f0c36d;
+    --code-bg: #eef1f5;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font: 15px/1.55 "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+
+  main {
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 32px 20px 48px;
+  }
+
+  h1 { font-size: 30px; line-height: 1.2; margin: 0 0 4px; }
+  h2 { font-size: 21px; margin: 36px 0 10px; padding-top: 6px; border-top: 2px solid var(--line); }
+  h3 { font-size: 16px; margin: 20px 0 6px; }
+  p { margin: 8px 0; }
+  ul, ol { margin: 8px 0; padding-left: 22px; }
+  li { margin: 4px 0; }
+  a { color: var(--accent); }
+
+  .subtitle { color: var(--muted); margin: 0 0 20px; }
+
+  code, kbd, .path {
+    font-family: "Cascadia Mono", Consolas, "Courier New", monospace;
+    font-size: 0.92em;
+    background: var(--code-bg);
+    border-radius: 4px;
+    padding: 1px 5px;
+    overflow-wrap: anywhere;
+  }
+
+  kbd { border: 1px solid #c3cad3; border-bottom-width: 2px; background: #fff; }
+
+  .ui { font-weight: 600; }
+
+  figure { margin: 14px 0 18px; break-inside: avoid; page-break-inside: avoid; }
+  figure img { display: block; max-width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--line); }
+  figcaption { color: var(--muted); font-size: 13px; margin-top: 6px; }
+
+  .summary {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin: 14px 0;
+  }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .card h3 { margin-top: 0; }
+
+  .step {
+    display: grid;
+    grid-template-columns: 44px 1fr;
+    gap: 14px;
+    margin: 26px 0 8px;
+  }
+
+  .step-number {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-size: 21px;
+    font-weight: 700;
+    display: grid;
+    place-items: center;
+  }
+
+  .step h2 { border: 0; margin: 6px 0 6px; padding: 0; }
+
+  .dot {
+    display: inline-grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--callout);
+    color: #1a1a1a;
+    font-weight: 700;
+    font-size: 13px;
+    margin-right: 6px;
+    vertical-align: 1px;
+  }
+
+  ol.marked { list-style: none; padding-left: 0; }
+  ol.marked li { margin: 8px 0; }
+
+  .note {
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-line);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin: 12px 0;
+    break-inside: avoid;
+  }
+
+  .note strong:first-child { display: block; margin-bottom: 2px; }
+
+  table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+  th, td { text-align: left; vertical-align: top; padding: 7px 9px; border-bottom: 1px solid var(--line); }
+  th { background: var(--panel); font-size: 13px; }
+
+  .tree {
+    font-family: "Cascadia Mono", Consolas, "Courier New", monospace;
+    font-size: 13px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 14px;
+    white-space: pre;
+    overflow-x: auto;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* ---- Umbra illustrations, drawn rather than captured ---- */
+  .umbra {
+    background: #212021;
+    color: #d0d0d0;
+    border: 1px solid #484848;
+    border-radius: 10px;
+    overflow: hidden;
+    font-size: 13px;
+    margin: 14px 0 6px;
+    break-inside: avoid;
+  }
+
+  .umbra .bar { background: linear-gradient(#2f2e2f, #1a1a1a); padding: 7px 12px; font-weight: 600; border-bottom: 1px solid #404040; }
+  .umbra .body { display: grid; grid-template-columns: 150px 1fr; min-height: 150px; }
+  .umbra nav { background: #1a1a1a; border-right: 1px solid #404040; padding: 8px 0; }
+  .umbra nav div { padding: 5px 12px; color: #a8a8a8; }
+  .umbra nav div.on { color: #fff; background: #2f2e2f; box-shadow: inset 3px 0 #b98e4c; }
+  .umbra section { padding: 12px 14px; }
+  .umbra h4 { margin: 0 0 6px; color: #fff; font-size: 13px; }
+  .umbra p { margin: 4px 0 8px; color: #b8b8b8; }
+  .umbra .box { border: 1px solid #484848; border-radius: 6px; padding: 9px 11px; margin: 8px 0; }
+  .umbra .btn { display: inline-block; background: #101010; border: 1px solid #484848; border-radius: 5px; padding: 3px 10px; color: #e0e0e0; }
+  .umbra .check { display: inline-block; width: 13px; height: 13px; border: 1px solid #707070; border-radius: 3px; margin-right: 6px; vertical-align: -2px; background: #b98e4c; }
+  .umbra .ring { outline: 3px solid var(--callout); outline-offset: 3px; border-radius: 6px; }
+  .umbra .foot { display: flex; justify-content: flex-end; gap: 8px; padding: 8px 12px; border-top: 1px solid #404040; background: #1a1a1a; }
+
+  .toolbar {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    background: linear-gradient(#2f2e2f, #1a1a1a);
+    border: 1px solid #484848;
+    border-radius: 6px;
+    padding: 5px 8px;
+    width: fit-content;
+    margin: 10px 0 4px;
+    font-size: 13px;
+    color: #d0d0d0;
+  }
+
+  .toolbar .widget { background: #101010; border: 1px solid #484848; border-radius: 4px; padding: 3px 9px; white-space: nowrap; }
+  .toolbar .widget.parley { color: #ffb8de; }
+  .toolbar .icon { display: inline-block; width: 1.1em; text-align: center; margin-right: 4px; }
+
+  .footer { color: var(--muted); font-size: 12px; margin-top: 36px; border-top: 1px solid var(--line); padding-top: 10px; }
+
+  @media (max-width: 640px) {
+    .summary { grid-template-columns: 1fr; }
+    .umbra .body { grid-template-columns: 1fr; }
+    .umbra nav { display: none; }
+  }
+
+  @page { size: A4; margin: 14mm 13mm; }
+
+  @media print {
+    body { font-size: 11pt; }
+    main { max-width: none; padding: 0; }
+    h2, h3 { break-after: avoid; page-break-after: avoid; }
+    ol.marked li, .step-number { break-inside: avoid; page-break-inside: avoid; }
+    /* Smaller on paper, so a step's picture has a better chance of sharing a page with its instructions. */
+    figure img { width: auto; max-height: 100mm; margin: 0 auto; }
+    figure.hero img { max-height: 78mm; }
+    figcaption { text-align: center; }
+    .footer { margin-top: 18px; }
+    a { color: inherit; text-decoration: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Installing Parley</h1>
+<p class="subtitle">A test build of a chat plugin for Final Fantasy XIV. Test build of {{BUILD_DATE}}.</p>
+
+<p><strong>Parley</strong> keeps your tells, free company chat, linkshells and cross-world linkshells in one tidy window, with a tab for each kind of chat and a list of conversations down the side. It remembers your chat history, counts what you haven't read yet, and can make a sound when a message arrives.</p>
+
+<figure class="hero">
+  <img src="images/guide-parley.png" alt="The Parley window showing a conversation with Mira Thorne, with the list of tells on the left.">
+  <figcaption>Parley's window: tabs across the top, conversations down the left, the chat itself on the right.</figcaption>
+</figure>
+
+<h2>Before you start</h2>
+<div class="summary">
+  <div class="card">
+    <h3>You need</h3>
+    <ul>
+      <li>Final Fantasy XIV, started through <strong>XIVLauncher</strong> with plugins working (you can open <code>/xlplugins</code> in game).</li>
+      <li>About five minutes.</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Optional</h3>
+    <ul>
+      <li><strong>Umbra</strong>, if you use it and want a button on its toolbar that shows new messages, like a phone notification.</li>
+    </ul>
+  </div>
+</div>
+
+<h3>What's in the zip</h3>
+<div class="tree">Parley\
+├─ Install guide.html      ← this guide
+├─ Plugin\
+│  ├─ Parley.dll           ← the plugin itself
+│  ├─ Parley.json
+│  └─ Parley.deps.json
+└─ Umbra widget\
+   └─ Umbra.Parley.dll     ← only if you use Umbra</div>
+
+<p>Keep the three files in <code>Plugin</code> together. Parley is loaded straight from that folder, which is why step 1 matters.</p>
+
+<div class="step">
+  <div class="step-number">1</div>
+  <div>
+    <h2>Put the files somewhere they can stay</h2>
+    <p>The game loads Parley from wherever you unzip it, every time it starts, so don't leave it in a folder you tidy out, like Downloads.</p>
+    <ol>
+      <li>Make a folder such as <span class="path">C:\FFXIV Plugins</span>.</li>
+      <li>Right-click the zip, choose <span class="ui">Extract All…</span>, and extract it into that folder.</li>
+      <li>You should now have a file at a path like <span class="path">C:\FFXIV Plugins\Parley\Plugin\Parley.dll</span>. It's fine if yours is a little different; you'll pick the file in the next step.</li>
+    </ol>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-number">2</div>
+  <div>
+    <h2>Tell Dalamud where Parley is</h2>
+    <p>Parley isn't in the official plugin list yet, so Dalamud needs to be pointed at it once. In game, type <code>/xlsettings</code> in the chat box and press <kbd>Enter</kbd>. Then:</p>
+    <ol class="marked">
+      <li><span class="dot">1</span>Open the <span class="ui">Experimental</span> tab and tick <span class="ui">Enable Developer Mode</span>. A section called <span class="ui">Dev Plugin Locations</span> appears underneath.</li>
+      <li><span class="dot">2</span>Click <span class="ui">Select Dev Plugin DLL</span>, find the <span class="path">Parley.dll</span> in the <code>Plugin</code> folder from step 1, and choose it.</li>
+      <li><span class="dot">3</span>It's added to the list, with <span class="ui">Enabled</span> ticked.</li>
+      <li><span class="dot">4</span>Click <span class="ui">Save</span>, the round button at the bottom right.</li>
+    </ol>
+    <figure>
+      <img src="images/guide-dalamud-settings.png" alt="Dalamud Settings on the Experimental tab, with the four places to click marked 1 to 4.">
+      <figcaption>Illustration of Dalamud's settings. Your window may look slightly different, but the words match.</figcaption>
+    </figure>
+    <div class="note">
+      <strong>Rather type the path?</strong>
+      In File Explorer, hold <kbd>Shift</kbd>, right-click <span class="path">Parley.dll</span> and choose <span class="ui">Copy as path</span>. Paste it into the empty box at the bottom of the list and click the <span class="ui">+</span> button that appears beside it.
+    </div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-number">3</div>
+  <div>
+    <h2>Turn Parley on</h2>
+    <p>Type <code>/xlplugins</code> to open the Plugin Installer.</p>
+    <ol class="marked">
+      <li><span class="dot">1</span>In the list on the left, under <span class="ui">Dev Tools</span>, click <span class="ui">Installed Dev Plugins</span>.</li>
+      <li><span class="dot">2</span>Find <span class="ui">Parley (dev plugin)</span> and, if its switch is off, click it to turn Parley on.</li>
+    </ol>
+    <figure>
+      <img src="images/guide-dalamud-installer.png" alt="The Plugin Installer on Installed Dev Plugins, with Parley listed and its on/off switch marked.">
+      <figcaption>Illustration of the Plugin Installer. From now on Parley starts with the game by itself.</figcaption>
+    </figure>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-number">4</div>
+  <div>
+    <h2>Open Parley</h2>
+    <p>Type <code>/parley</code> to open or close the window. Tells, free company, linkshell and cross-world linkshell messages collect in it from now on; older chat from before you installed it won't appear.</p>
+    <figure>
+      <img src="images/guide-free-company.png" alt="Parley on the Free Company tab, showing the free company's chat.">
+      <figcaption>The Free Company tab. With only one free company there's no list beside it, just the chat.</figcaption>
+    </figure>
+    <h3>Things worth knowing</h3>
+    <ul>
+      <li>Click a tab to switch between <span class="ui">Tells</span>, <span class="ui">Free Company</span>, <span class="ui">Linkshells</span> and <span class="ui">Cross-world</span>. Red numbers are messages you haven't read.</li>
+      <li>Type in the box at the bottom and press <kbd>Enter</kbd> to reply. Long messages are split into several automatically.</li>
+      <li>With Parley selected, <kbd>Alt</kbd>+<kbd>R</kbd> goes to the next conversation in the tab, and <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> goes back.</li>
+      <li>Start a new tell with the <span class="ui">+</span> at the top right, by typing <code>/parley First Last@World</code>, or by right-clicking a player in game and choosing <span class="ui">Message in Parley</span>.</li>
+      <li>Right-click a conversation or a message for more options: pin, mute, copy, give someone's name a colour of your choosing, and so on.</li>
+      <li>The cog in the window's title bar, or <code>/parley config</code>, opens the settings.</li>
+    </ul>
+  </div>
+</div>
+
+<h2>Sounds and notifications</h2>
+<p>By default Parley is silent. In the settings, the <span class="ui">Notifications</span> tab gives each kind of chat its own sound (one of Parley's own, one of the game's sound effects, or a WAV file of your own), a volume, and a pop-up notification if you want one. <span class="ui">Test</span> plays the sound so you can hear it.</p>
+<figure>
+  <img src="images/guide-notifications.png" alt="Parley's settings on the Notifications tab, with a sound chosen for tells and for the free company.">
+  <figcaption>The volume slider works for Parley's own sounds and for sound files. The game's sound effects follow the game's own system sound volume.</figcaption>
+</figure>
+<p>The <span class="ui">Appearance</span> tab changes how Parley looks. It can match Dalamud's style, the colour theme you picked in the game's System Configuration, or your Umbra colours.</p>
+
+<div class="step">
+  <div class="step-number">5</div>
+  <div>
+    <h2>Optional: the Umbra toolbar button</h2>
+    <p>Only if you use <strong>Umbra</strong>. This adds a button to Umbra's toolbar that says how many messages are waiting.</p>
+    <div class="toolbar">
+      <span class="widget"><span class="icon">☰</span>Menu</span>
+      <span class="widget parley"><span class="icon">💬</span>2 new Tells</span>
+      <span class="widget">20:15</span>
+    </div>
+    <p style="color: var(--muted); font-size: 13px; margin-top: 2px;">Left-click opens Parley. Right-click marks everything as read.</p>
+
+    <h3>Install it</h3>
+    <ol>
+      <li>Type <code>/umbra</code> to open <span class="ui">Umbra Settings</span>, and pick <span class="ui">Plugins</span> on the left.</li>
+      <li>The first time, Umbra shows <span class="ui">A word of warning…</span> about plugins made by other people. Tick <span class="ui">I have read and agreed to the above statement.</span></li>
+      <li>Under <span class="ui">Install from file</span>, click <span class="ui">Browse...</span> and choose <span class="path">Umbra.Parley.dll</span> from the <code>Umbra widget</code> folder.</li>
+      <li>Umbra says it needs to be restarted. Click <span class="ui">Restart Umbra</span>.</li>
+    </ol>
+
+    <div class="umbra" aria-label="Illustration of Umbra's Plugins page">
+      <div class="bar">Umbra Settings</div>
+      <div class="body">
+        <nav>
+          <div>Toolbar Widgets</div>
+          <div>Appearance</div>
+          <div>World Markers</div>
+          <div class="on">Plugins</div>
+        </nav>
+        <section>
+          <div class="box">
+            <h4>A word of warning...</h4>
+            <p>Third-party plugins should only be installed from trusted sources. …</p>
+            <span class="ring"><span class="check"></span>I have read and agreed to the above statement.</span>
+          </div>
+          <h4 style="margin-top: 12px;">Install a Plugin</h4>
+          <div class="box">
+            <h4>Install from file</h4>
+            <p>Install a plugin from a DLL file on your computer. Click the browse button to select the file.</p>
+            <span class="btn ring">Browse...</span>
+          </div>
+        </section>
+      </div>
+      <div class="foot"><span class="btn ring">Restart Umbra</span></div>
+    </div>
+    <p style="color: var(--muted); font-size: 13px; margin-top: 4px;">Illustration of Umbra's settings, simplified. The buttons to press are ringed.</p>
+
+    <h3>Put it on the toolbar</h3>
+    <ol>
+      <li>In <span class="ui">Umbra Settings</span>, pick <span class="ui">Toolbar Widgets</span>.</li>
+      <li>Under <span class="ui">Left Side</span>, <span class="ui">Center</span> or <span class="ui">Right Side</span>, click <span class="ui">Add Widget</span>, search for <strong>Parley</strong>, and click <span class="ui">Add Parley</span>.</li>
+      <li>To change what the button shows, open that widget's settings. There's a choice of wording ("2 new Tells", "T:2 FC:0 LS:5 CW:1" or "8 new messages") and a choice of which chats it counts.</li>
+    </ol>
+    <div class="note">
+      <strong>Not using Umbra?</strong>
+      Parley puts the same unread count in the game's server info bar at the top of the screen instead, and you can click that to open the window.
+    </div>
+  </div>
+</div>
+
+<h2>Updating to a newer test build</h2>
+<ol>
+  <li>Extract the new zip over the old folder, so the new <span class="path">Parley.dll</span> replaces the old one in the same place.</li>
+  <li>That's all. Dalamud notices the file has changed and reloads Parley by itself. If it doesn't, restart the game.</li>
+  <li>If you use the Umbra button, replace <span class="path">Umbra.Parley.dll</span> the same way and click <span class="ui">Restart Umbra</span>.</li>
+</ol>
+<p>Your settings and chat history are kept separately and survive updates.</p>
+
+<h2>If something goes wrong</h2>
+<table>
+  <thead>
+    <tr><th style="width: 40%">What you see</th><th>What to do</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>No <span class="ui">Dev Plugin Locations</span> section in <code>/xlsettings</code></td>
+      <td>Tick <span class="ui">Enable Developer Mode</span> first, on the <span class="ui">Experimental</span> tab.</td>
+    </tr>
+    <tr>
+      <td>A warning next to the path, or Parley isn't under <span class="ui">Installed Dev Plugins</span></td>
+      <td>The path must end in <span class="path">Parley.dll</span>, and <span class="path">Parley.json</span> must be in the same folder. Check you clicked <span class="ui">Save</span>, then look again in <code>/xlplugins</code>.</td>
+    </tr>
+    <tr>
+      <td>Parley was working but vanished after you moved or deleted the folder</td>
+      <td>Put the folder back, or do step 2 again pointing at its new place.</td>
+    </tr>
+    <tr>
+      <td>Umbra won't load the Parley button</td>
+      <td>The button is built for Umbra 3.1. Send along which version of Umbra you have (it's shown in the plugin installer).</td>
+    </tr>
+    <tr>
+      <td>An error, or something looks wrong</td>
+      <td>Type <code>/xllog</code> to open Dalamud's log, then take a screenshot of any red lines that mention Parley. Send it along with what you were doing.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Removing Parley</h2>
+<ol>
+  <li>In <code>/xlplugins</code> → <span class="ui">Installed Dev Plugins</span>, turn Parley's switch off.</li>
+  <li>In <code>/xlsettings</code> → <span class="ui">Experimental</span>, click the bin icon beside Parley's path, then <span class="ui">Save</span>.</li>
+  <li>If you added the Umbra button, remove it in <span class="ui">Umbra Settings</span> → <span class="ui">Plugins</span>.</li>
+  <li>Delete the folder. Your chat history is in <span class="path">%AppData%\XIVLauncher\pluginConfigs\Parley</span> if you want to keep it or delete it too.</li>
+</ol>
+
+<p class="footer">Parley test build of {{BUILD_DATE}} · Parley {{VERSION}} · Pictures of Parley are from the plugin itself; pictures of Dalamud and Umbra are illustrations.</p>
+
+</main>
+</body>
+</html>

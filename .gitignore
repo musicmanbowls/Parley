@@ -1,0 +1,18 @@
+bin/
+obj/
+artifacts/
+
+# Local credentials, configuration and IDE state are never source files.
+.env
+.env.*
+*.user
+*.pdb
+.vs/
+.idea/
+.DS_Store
+
+# Generated test reports
+**/TestResults/
+
+# Packages made for testers
+dist/

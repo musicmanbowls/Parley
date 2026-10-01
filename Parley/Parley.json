@@ -1,0 +1,20 @@
+{
+  "Author": "MusicManBowls",
+  "Name": "Parley",
+  "Punchline": "A tabbed messenger for tells, your free company, linkshells and cross-world linkshells.",
+  "Description": "Keeps every tell, your free company, and each linkshell and cross-world linkshell in its own conversation, grouped under tabs with a sidebar to switch between them. Remembers history per character, counts what you have not read, shows which tells are with friends and whether they are online, busy or in a duty, and plays a sound of your choosing for each kind of chat. Clickable links, item tooltips, search, symbols and pop-out windows included. Can follow Dalamud's style, the game's UI theme or your Umbra colour profile, and an optional Umbra companion adds a toolbar widget that shows unread messages.",
+  "Tags": [
+    "chat",
+    "tell",
+    "free company",
+    "linkshell",
+    "cwls",
+    "messenger",
+    "umbra"
+  ],
+  "InternalName": "Parley",
+  "ApplicableVersion": "any",
+  "RepoUrl": "https://github.com/musicmanbowls/Parley",
+  "IconUrl": "https://raw.githubusercontent.com/musicmanbowls/Parley/main/Parley/images/icon.png",
+  "LoadPriority": 0
+}
