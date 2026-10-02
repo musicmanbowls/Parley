@@ -6,7 +6,7 @@
     <Deterministic>true</Deterministic>
     <Authors>MusicManBowls</Authors>
     <Company></Company>
-    <Version>1.0.0.0</Version>
+    <Version>1.1.0.0</Version>
     <ImplicitUsings>enable</ImplicitUsings>
     <Description>A tabbed messenger for tells, your free company, linkshells and cross-world linkshells, with per-conversation history, unread counts and an optional Umbra toolbar widget.</Description>
     <!-- One place for the built plugin whichever way it is built: the solution
