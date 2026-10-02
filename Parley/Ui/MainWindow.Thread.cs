@@ -59,9 +59,7 @@ internal sealed partial class MainWindow
     private Vector2 normalPadding;
     private Vector2 normalSpacing;
 
-    // The header's text, fitted to its width.
-    private FitCache headerTitle;
-    private FitCache headerSubtitle;
+    // The line under a conversation's name in its banner, kept until what it says changes.
     private Conversation? subtitleFor;
     private int subtitleSlot = -1;
     private string subtitle = string.Empty;
@@ -73,6 +71,12 @@ internal sealed partial class MainWindow
     {
         public bool Bubbles { get; init; }
         public bool EveryTime { get; init; }
+
+        /// <summary>A divider wherever a gap in the conversation makes a time useful, not only where the day changes.</summary>
+        public bool GapDividers { get; init; }
+
+        /// <summary>No times beside or above messages at all.</summary>
+        public bool NoTimes { get; init; }
         public float Gutter { get; init; }
         public float PadX { get; init; }
         public float PadY { get; init; }
@@ -104,7 +108,7 @@ internal sealed partial class MainWindow
         normalPadding = style.WindowPadding;
         normalSpacing = style.ItemSpacing;
 
-        var key = HashCode.Combine(ImGui.GetFontSize(), (int)config.MessageStyle, (int)config.Timestamps, fonts.Generation, config.Use24Hour);
+        var key = HashCode.Combine(ImGui.GetFontSize(), (int)look.Layout, (int)look.Timestamps, fonts.Generation, config.Use24Hour, scale);
         if (key == layoutKey) return;
         layoutKey = key;
         layoutStamp++;
@@ -128,19 +132,25 @@ internal sealed partial class MainWindow
 
             if (selected == null)
             {
-                DrawHeaderBar(null);
+                // With tabs across the top there is no list to explain an empty section, so this does.
+                var none = store.InGroup(group).Count == 0;
                 DrawCentred(group switch
                 {
+                    ChannelGroup.Tell when none && store.IndexLoaded => "No tells yet.\nStart one with the + button above, or wait for someone to write.",
                     ChannelGroup.Tell => "No conversation selected.\nStart one with the + button above, or wait for someone to write.",
+                    ChannelGroup.Linkshell when none => "You are not in any linkshells.\nTheir chat appears here once you are in one.",
                     ChannelGroup.Linkshell => "Your linkshells appear here once you are in one.",
                     ChannelGroup.FreeCompany => "You are not in a free company.\nIts chat appears here once you are.",
+                    _ when none => "You are not in any cross-world linkshells.\nTheir chat appears here once you are in one.",
                     _ => "Your cross-world linkshells appear here once you are in one.",
                 }, ImGui.GetContentRegionAvail());
             }
             else
             {
+                // No banner above the messages: who a conversation is with
+                // shows when its tab or row is pointed at (see DrawBanner),
+                // and the messages have the room instead.
                 var conversation = selected;
-                DrawHeaderBar(conversation);
                 var messagesHeight = MathF.Max(40f * scale, ImGui.GetContentRegionAvail().Y - ComposerHeight());
                 DrawMessages(conversation, messagesHeight);
                 DrawComposer(conversation);
@@ -150,91 +160,6 @@ internal sealed partial class MainWindow
         {
             ImGui.EndChild();
         }
-    }
-
-    private void DrawHeaderBar(Conversation? conversation)
-    {
-        var drawList = ImGui.GetWindowDrawList();
-        var lineHeight = ImGui.GetTextLineHeight();
-        var min = ImGui.GetCursorScreenPos();
-        var width = ImGui.GetContentRegionAvail().X;
-        var height = (lineHeight * 2f) + (12f * scale);
-
-        ImGui.Dummy(new Vector2(width, height));
-        var after = ImGui.GetCursorScreenPos();
-        var max = new Vector2(min.X + width, min.Y + height);
-        drawList.AddRectFilled(min, max, Painter.U32(palette.HeaderBg), 6f * scale);
-
-        var button = lineHeight + (10f * scale);
-        var buttonY = min.Y + ((height - button) * 0.5f);
-
-        var textLeft = min.X + (12f * scale);
-        if (showSidebar)
-        {
-            ImGui.SetCursorScreenPos(new Vector2(min.X + (4f * scale), buttonY));
-            var collapsed = config.SidebarCollapsed;
-            if (Painter.IconButton("##collapse", collapsed ? FontAwesomeIcon.AngleDoubleRight : FontAwesomeIcon.AngleDoubleLeft,
-                    collapsed ? "Show the conversation list" : "Shrink the conversation list", palette, button))
-            {
-                config.SidebarCollapsed = !collapsed;
-                plugin.SaveConfig();
-            }
-
-            textLeft = min.X + (4f * scale) + button + (8f * scale);
-        }
-
-        var textRight = max.X - (8f * scale);
-
-        if (conversation != null)
-        {
-            var x = max.X - (4f * scale) - button;
-            ImGui.SetCursorScreenPos(new Vector2(x, buttonY));
-            if (Painter.IconButton("##more", FontAwesomeIcon.EllipsisV, "More", palette, button)) ImGui.OpenPopup("##panemenu");
-            if (BeginMenu("##panemenu"))
-            {
-                try
-                {
-                    DrawConversationMenuItems(conversation);
-                }
-                finally
-                {
-                    EndMenu();
-                }
-            }
-
-            var highlight = ColourMath.LegibleOn(palette.Accent, palette.HeaderBg, palette.Text);
-
-            x -= button + (2f * scale);
-            ImGui.SetCursorScreenPos(new Vector2(x, buttonY));
-            if (Painter.IconButton("##mute", conversation.Muted ? FontAwesomeIcon.BellSlash : FontAwesomeIcon.Bell,
-                    conversation.Muted ? "Muted: new messages here are not counted.\nClick to unmute." : "Mute this conversation",
-                    palette, button, conversation.Muted ? highlight : null))
-                store.SetMuted(conversation, !conversation.Muted);
-
-            x -= button + (2f * scale);
-            ImGui.SetCursorScreenPos(new Vector2(x, buttonY));
-            if (Painter.IconButton("##pin", FontAwesomeIcon.Thumbtack,
-                    conversation.Pinned ? "Pinned to the top of the list.\nClick to unpin." : "Pin to the top of the list",
-                    palette, button, conversation.Pinned ? highlight : null))
-                store.SetPinned(conversation, !conversation.Pinned);
-
-            textRight = x - (8f * scale);
-
-            var top = min.Y + (6f * scale);
-            var available = textRight - textLeft;
-            drawList.AddText(new Vector2(textLeft, top), Painter.U32(palette.Text),
-                headerTitle.Get(conversation.Title, available, layoutStamp, out _));
-            drawList.AddText(new Vector2(textLeft, top + lineHeight),
-                Painter.U32(ColourMath.LegibleOn(theme.ColourFor(conversation), palette.HeaderBg, palette.Text)),
-                headerSubtitle.Get(Subtitle(conversation), available, layoutStamp, out _));
-        }
-        else
-        {
-            drawList.AddText(new Vector2(textLeft, min.Y + ((height - lineHeight) * 0.5f)), Painter.U32(palette.TextMuted),
-                headerTitle.Get(group.Label(), textRight - textLeft, layoutStamp, out _));
-        }
-
-        ImGui.SetCursorScreenPos(after);
     }
 
     /// <summary>The line under a conversation's name. Built when the conversation or its slot changes, not per frame.</summary>
@@ -330,7 +255,7 @@ internal sealed partial class MainWindow
             selecting = false;
         }
 
-        BeginText(conversation);
+        BeginText(conversation.Messages);
 
         // While the view follows the newest message, dropping the oldest ones
         // from memory moves nothing on screen, so this is the time to do it.
@@ -457,7 +382,7 @@ internal sealed partial class MainWindow
             y += block.Height;
         }
 
-        HandleTextMouse(conversation, origin, width, view.Y);
+        HandleTextMouse(origin, width, view.Y, scroll.Wheel);
         SeekMessage(conversation, width, view.Y, total);
 
         if (jump && !scroll.Following) PaintJumpToLatest(drawList, jumpAt, jumpSize, jumpHovered, jumpHeld);
@@ -555,8 +480,8 @@ internal sealed partial class MainWindow
 
     private Metrics BuildMetrics(float width)
     {
-        var bubbles = config.MessageStyle == MessageStyle.Bubbles;
-        var everyTime = config.Timestamps == TimestampStyle.EveryMessage;
+        var bubbles = look.Layout == MessageStyle.Bubbles;
+        var everyTime = look.Timestamps == TimestampStyle.EveryMessage;
         var lineHeight = ImGui.GetTextLineHeight();
         var gutter = 2f * scale;
         var padX = bubbles ? 10f * scale : 0f;
@@ -574,6 +499,8 @@ internal sealed partial class MainWindow
         {
             Bubbles = bubbles,
             EveryTime = everyTime,
+            GapDividers = look.Timestamps == TimestampStyle.Dividers,
+            NoTimes = look.Timestamps == TimestampStyle.None,
             Gutter = gutter,
             PadX = padX,
             PadY = padY,
@@ -596,7 +523,7 @@ internal sealed partial class MainWindow
         var block = default(Block);
 
         var dayChanged = previous == null || LocalDay(previous) != LocalDay(message);
-        block.Divider = dayChanged || (!metrics.EveryTime && message.Timestamp - previous!.Timestamp > DividerGapMs);
+        block.Divider = dayChanged || (metrics.GapDividers && message.Timestamp - previous!.Timestamp > DividerGapMs);
 
         var marker = conversation.FirstUnreadTimestamp;
         block.Unread = marker != 0 && !message.IsOutgoing && !message.IsNotice && message.Timestamp >= marker
@@ -754,7 +681,7 @@ internal sealed partial class MainWindow
         if (block.Header)
         {
             var nameWidth = DrawSender(drawList, conversation, message, new Vector2(x, y));
-            drawList.AddText(new Vector2(x + nameWidth + (8f * scale), y), Painter.U32(palette.TextMuted), Clock(message));
+            if (!metrics.NoTimes) drawList.AddText(new Vector2(x + nameWidth + (8f * scale), y), Painter.U32(palette.TextMuted), Clock(message));
             y += metrics.HeaderHeight;
         }
 

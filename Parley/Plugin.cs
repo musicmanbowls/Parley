@@ -1,3 +1,4 @@
+using System.Numerics;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Keys;
 using Dalamud.Game.Command;
@@ -8,6 +9,7 @@ using Dalamud.Plugin.Services;
 using Parley.Core;
 using Parley.Core.History;
 using Parley.Core.Settings;
+using Parley.Core.Theme;
 using Parley.Game;
 using Parley.Integration;
 using Parley.Ui;
@@ -39,6 +41,12 @@ public sealed class Plugin : IDalamudPlugin
     /// <summary>And shows at most one notification per conversation in this long.</summary>
     private const long ToastGapMs = 4000;
 
+    /// <summary>How often General reads the game's chat tabs, to follow changes to their names and filters.</summary>
+    private const long GeneralTabsReadMs = 1000;
+
+    /// <summary>How long a chat log colour is used before it is read from the game again.</summary>
+    private const long ChatColourRefreshMs = 2000;
+
     private readonly string configPath;
     private readonly WindowSystem windows = new("Parley");
     private readonly int[] emptyStreak = new int[ChannelGroups.Count];
@@ -54,6 +62,24 @@ public sealed class Plugin : IDalamudPlugin
 
     private ulong contentId;
     private long nextSlotRefresh;
+    private long nextGeneralTabsRead;
+
+    /// <summary>Whether General has been put on screen since logging in, while Parley stands in for the game's chat.</summary>
+    private bool generalShownThisLogin;
+
+    /// <summary>Whether Parley was standing in for the game's chat last tick, to notice it starting or stopping.</summary>
+    private bool wasReplacing;
+
+    /// <summary>When the game's chat box took the keyboard, while Parley stands in for it. Zero when it has not.</summary>
+    private long gameInputSince;
+
+    /// <summary>How long to leave a key that opened the game's chat box to land in it, before taking what was typed.</summary>
+    private const long GameInputSettleMs = 40;
+
+    private TellRequests? tellRequests;
+
+    private readonly Dictionary<int, Vector4?> chatColours = [];
+    private long chatColoursRead;
 
     // Whether each of the windows' shortcut keys was taken from the game last
     // tick, so a held key acts once and not on every tick it is down.
@@ -71,6 +97,9 @@ public sealed class Plugin : IDalamudPlugin
     /// <summary>The chat window being used, if any: the one Enter puts the cursor in. See HandleWindowKeys.</summary>
     private MainWindow? chatInUse;
     private long configDirtySince;
+
+    /// <summary>The settings file being written on a worker, if any. Each write waits for the one before.</summary>
+    private Task configWrite = Task.CompletedTask;
     private long lastErrorLogged;
     private bool disposed;
 
@@ -111,6 +140,7 @@ public sealed class Plugin : IDalamudPlugin
             dtr = new DtrEntry(this);
             contextMenu = new ContextMenuIntegration(this);
             capture = new ChatCapture(this);
+            tellRequests = new TellRequests();
 
             ApplyConfig();
 
@@ -121,6 +151,7 @@ public sealed class Plugin : IDalamudPlugin
                               + $"{Command} <part of a name> → open an existing conversation\n"
                               + $"{Command} read → mark everything as read\n"
                               + $"{Command} friends → check what Parley can see of your friend list\n"
+                              + $"{Command} tabs → check what Parley reads of the game's chat tabs\n"
                               + $"{Command} config → open the settings",
             });
 
@@ -181,6 +212,18 @@ public sealed class Plugin : IDalamudPlugin
         disposed = true;
 
         Services.Framework.Update -= OnFrameworkUpdate;
+
+        // The game's chat log must never stay hidden after Parley has gone.
+        // Dalamud disposes plugins on the framework thread, where it is safe to touch.
+        try
+        {
+            GameChatWindow.Restore();
+        }
+        catch (Exception ex)
+        {
+            Services.Log.Error(ex, "Could not show the game's chat log again.");
+        }
+
         var builder = Services.PluginInterface.UiBuilder;
         builder.Draw -= windows.Draw;
         builder.OpenMainUi -= OpenMainUi;
@@ -188,6 +231,7 @@ public sealed class Plugin : IDalamudPlugin
         Services.Commands.RemoveHandler(Command);
 
         capture?.Dispose();
+        tellRequests?.Dispose();
         contextMenu?.Dispose();
         dtr?.Dispose();
         Ipc?.Dispose();
@@ -202,7 +246,8 @@ public sealed class Plugin : IDalamudPlugin
         Store?.UnloadCharacter();
         History.Dispose();
 
-        if (configDirtySince != 0) WriteConfig();
+        if (configDirtySince != 0) WriteConfig(wait: true);
+        else configWrite.Wait(5000);
     }
 
     // ------------------------------------------------------------------
@@ -302,8 +347,231 @@ public sealed class Plugin : IDalamudPlugin
     /// <summary>The stand-in for an item linked into a reply; see <see cref="ItemLinks"/>.</summary>
     internal string ItemLinkToken(uint rawId, string name) => ItemLinks.Token(rawId, name);
 
+    // The game's auto-translate dictionary, for the picker beside each reply box.
+    internal IReadOnlyList<AutoTranslateGroup> AutoTranslateGroups() => AutoTranslate.Groups();
+    internal IReadOnlyList<AutoTranslatePhrase> AutoTranslatePhrases(uint group) => AutoTranslate.Phrases(group);
+    internal IReadOnlyList<AutoTranslatePhrase> AutoTranslateAll() => AutoTranslate.All();
+
+    /// <summary>The stand-in for an auto-translate phrase in a reply, sent as the real thing.</summary>
+    internal string AutoTranslateToken(AutoTranslatePhrase phrase) => ItemLinks.Phrase(phrase.Group, phrase.Key, phrase.Text);
+
     internal SendOutcome Send(Conversation conversation, string text) =>
         Store.HasCharacter ? Outgoing.Send(conversation, text) : SendOutcome.CannotSend;
+
+    // ------------------------------------------------------------------
+    // General: the game's own chat log
+    // ------------------------------------------------------------------
+
+    /// <summary>The game's chat log, tab by tab, while General is turned on.</summary>
+    internal GeneralLog General { get; } = new();
+
+    /// <summary>
+    /// The channel the game's chat box is on, as Parley names it: null when
+    /// Parley does not know it, in which case the game's label is all there is.
+    /// For a tell, also who it goes to.
+    /// </summary>
+    internal (ChatChannel? Channel, string Label, string TellTo) CurrentChannel()
+    {
+        var (id, label, tellTo) = GameChatTabs.CurrentChannel();
+        return (id == ChatChannels.TellId ? null : ChatChannels.ById(id), label, id == ChatChannels.TellId ? tellTo : string.Empty);
+    }
+
+    /// <summary>The game's chat log colour for a kind of line, from Log Text Colors. Null when the game gives none.</summary>
+    internal Vector4? ChatColour(int kind)
+    {
+        var now = Environment.TickCount64;
+        if (now - chatColoursRead > ChatColourRefreshMs)
+        {
+            chatColoursRead = now;
+            chatColours.Clear();
+        }
+
+        if (chatColours.TryGetValue(kind, out var known)) return known;
+
+        Vector4? colour = null;
+        try
+        {
+            if (LogFormats.Colour(kind) is { } rgb) colour = ColourMath.FromRgb(rgb);
+        }
+        catch (Exception ex)
+        {
+            Services.Log.Verbose(ex, $"Could not read the colour for line kind {kind}.");
+        }
+
+        chatColours[kind] = colour;
+        return colour;
+    }
+
+    /// <summary>Types a line into the game's chat box, as though in the game's own: it goes to the box's channel, and commands work.</summary>
+    internal bool SendGeneral(string text)
+    {
+        if (!Store.HasCharacter) return false;
+        var line = ChatSender.Sanitise(text.Trim());
+        return line.Length > 0 && ChatSender.TrySend(line);
+    }
+
+    /// <summary>Whether Parley is standing in for the game's chat log right now.</summary>
+    internal bool ReplacingGameChat => Config.ReplaceGameChat && Config.GeneralChat && Store.HasCharacter;
+
+    /// <summary>
+    /// While Parley stands in for the game's chat log: keeps the game's chat
+    /// windows hidden, puts General on screen once per login, and takes the
+    /// keyboard over from the game's chat box whenever the game puts it there.
+    /// Otherwise makes sure the game's chat log is back.
+    /// </summary>
+    private void UpdateGameChat(long tick)
+    {
+        var replacing = ReplacingGameChat;
+        if (replacing != wasReplacing)
+        {
+            wasReplacing = replacing;
+            ApplyUiHiding();
+        }
+
+        if (!replacing)
+        {
+            GameChatWindow.Restore();
+            gameInputSince = 0;
+            return;
+        }
+
+        GameChatWindow.Hide();
+
+        if (!generalShownThisLogin)
+        {
+            generalShownThisLogin = true;
+            MainWindow.TypeInGeneral(focus: false);
+        }
+
+        if (!GameChatWindow.InputActive())
+        {
+            gameInputSince = 0;
+            return;
+        }
+
+        // The game has put the keyboard in its own, hidden, chat box. A moment
+        // later, so a "/" from its slash key has landed in it, whatever is
+        // there comes across to Parley's box, and with it a tell the game was
+        // asked to start, as Send Tell does.
+        if (gameInputSince == 0)
+        {
+            gameInputSince = tick;
+            return;
+        }
+        if (tick - gameInputSince < GameInputSettleMs) return;
+        gameInputSince = 0;
+
+        var typed = GameChatWindow.TakeInput();
+        GameChatWindow.ReleaseInput();
+
+        var prefill = typed;
+        if (tellRequests?.Take() is { } tell)
+        {
+            var world = tell.World.Length > 0 ? tell.World : Worlds.Name(tell.WorldId);
+            prefill = world.Length > 0 ? $"/tell {tell.Name}@{world} " : $"/tell {tell.Name} ";
+        }
+        MainWindow.TypeInGeneral(prefill: prefill);
+    }
+
+    /// <summary>
+    /// Whether the game's own chat log would be out of sight right now: in a
+    /// cutscene, group pose, a loading screen, or with the game's UI hidden.
+    /// While Parley stands in for it, Parley goes too, until Enter calls it up.
+    /// </summary>
+    internal bool GameChatWouldHide()
+    {
+        var condition = Services.Condition;
+        if (condition[ConditionFlag.BetweenAreas] || condition[ConditionFlag.BetweenAreas51] || Services.ClientState.IsGPosing || Services.GameGui.GameUiHidden)
+            return true;
+
+        // Some cutscenes leave the chat log up, and the game marks a cutscene
+        // as started a moment before it hides anything. Its own flag decides.
+        var cutscene = condition[ConditionFlag.OccupiedInCutSceneEvent] || condition[ConditionFlag.WatchingCutscene] || condition[ConditionFlag.WatchingCutscene78];
+        return cutscene && GameChatWindow.HiddenByGame();
+    }
+
+    /// <summary>Opens the game's Log Window Settings, for General's cog.</summary>
+    internal bool OpenGameLogSettings()
+    {
+        try
+        {
+            return GameChatWindow.OpenLogSettings();
+        }
+        catch (Exception ex)
+        {
+            Services.Log.Warning(ex, "Could not open the game's Log Window Settings.");
+            return false;
+        }
+    }
+
+    /// <summary>Has the game add a chat tab, as its own "+" does, for General's "+". The new tab shows up in General when the game has made it.</summary>
+    internal bool AddGameChatTab()
+    {
+        try
+        {
+            if (!GameChatWindow.AddTab()) return false;
+            nextGeneralTabsRead = 0;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Services.Log.Warning(ex, "Could not add a tab to the game's chat log.");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Which of Dalamud's reasons to hide plugin windows apply to Parley's. While
+    /// Parley stands in for the game's chat it decides for itself, so that Enter
+    /// can still bring it up in a cutscene, as it does the game's chat.
+    /// </summary>
+    private void ApplyUiHiding()
+    {
+        var builder = Services.PluginInterface.UiBuilder;
+        var replacing = ReplacingGameChat;
+        builder.DisableCutsceneUiHide = replacing || Config.ShowInCutscenes;
+        builder.DisableGposeUiHide = replacing || Config.ShowInGpose;
+        builder.DisableUserUiHide = replacing || Config.ShowWhenUiHidden;
+    }
+
+    // ------------------------------------------------------------------
+    // What has been sent, for the up arrow
+    // ------------------------------------------------------------------
+
+    private const int SentHistoryLimit = 100;
+
+    /// <summary>Lines sent from any of Parley's boxes this session, oldest first, as the up arrow brings them back.</summary>
+    internal List<string> SentHistory { get; } = [];
+
+    internal void RecordSent(string text)
+    {
+        var line = text.Trim();
+        if (line.Length == 0) return;
+        if (SentHistory.Count > 0 && string.Equals(SentHistory[^1], line, StringComparison.Ordinal)) return;
+        SentHistory.Add(line);
+        if (SentHistory.Count > SentHistoryLimit) SentHistory.RemoveAt(0);
+    }
+
+    /// <summary>Reads the game's chat tabs for General, or lets go of its lines once it is turned off.</summary>
+    private void UpdateGeneral(long tick)
+    {
+        if (!Config.GeneralChat || !Store.HasCharacter)
+        {
+            if (General.All.Count > 0) General.Clear();
+            return;
+        }
+
+        if (tick < nextGeneralTabsRead) return;
+        nextGeneralTabsRead = tick + GeneralTabsReadMs;
+        try
+        {
+            General.SetTabs(GameChatTabs.Read());
+        }
+        catch (Exception ex)
+        {
+            Services.Log.Verbose(ex, "Could not read the game's chat tabs.");
+        }
+    }
 
     /// <summary>Marks the settings as changed. They are applied now and written shortly.</summary>
     internal void SaveConfig()
@@ -318,11 +586,7 @@ public sealed class Plugin : IDalamudPlugin
         Store.MaxLoadedMessages = Config.MaxLoadedMessages;
         Outgoing.SplitLongMessages = Config.SplitLongMessages;
         Outgoing.SplitDelayMs = Config.SplitDelayMs;
-
-        var builder = Services.PluginInterface.UiBuilder;
-        builder.DisableCutsceneUiHide = Config.ShowInCutscenes;
-        builder.DisableGposeUiHide = Config.ShowInGpose;
-        builder.DisableUserUiHide = Config.ShowWhenUiHidden;
+        ApplyUiHiding();
     }
 
     /// <summary>
@@ -396,6 +660,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         if (disposed) return;
 
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
             TrackCharacter();
@@ -439,6 +704,8 @@ public sealed class Plugin : IDalamudPlugin
             lastTellOnScreen = tellsOnScreen ? tellOnScreen : null;
 
             HandleWindowKeys();
+            UpdateGeneral(tick);
+            UpdateGameChat(tick);
 
             dtr?.Update();
 
@@ -454,6 +721,33 @@ public sealed class Plugin : IDalamudPlugin
                 Services.Log.Error(ex, "Parley's update failed.");
             }
         }
+
+        NoteSlowWork("its update", started);
+    }
+
+    /// <summary>Work on the game's thread that takes this long shows as a hitch, so it is worth a line in the log.</summary>
+    private const double SlowWorkMs = 50;
+
+    private long lastSlowWorkLogged;
+
+    /// <summary>
+    /// Logs, at most every ten seconds, when something Parley did on the
+    /// game's thread took long enough for the game to stutter, with what the
+    /// game was doing, so a hitch someone notices can be traced to Parley or
+    /// ruled out.
+    /// </summary>
+    /// <param name="started">A <see cref="System.Diagnostics.Stopwatch"/> timestamp from when it began.</param>
+    internal void NoteSlowWork(string what, long started)
+    {
+        var took = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        if (took < SlowWorkMs) return;
+
+        var tick = Environment.TickCount64;
+        if (tick - lastSlowWorkLogged < 10_000) return;
+        lastSlowWorkLogged = tick;
+
+        var context = GameChatWouldHide() ? "while the game's chat would be hidden" : "with the game's chat in view";
+        Services.Log.Information($"Parley took {took:0} ms over {what}, {context}.");
     }
 
     /// <summary>Notices logging in, logging out and switching character, by watching whose content id is loaded.</summary>
@@ -469,6 +763,9 @@ public sealed class Plugin : IDalamudPlugin
         Array.Clear(slotsSeen);
 
         FriendList.Forget();
+        General.Clear();
+        nextGeneralTabsRead = 0;
+        generalShownThisLogin = false;
 
         if (id == 0)
         {
@@ -557,8 +854,16 @@ public sealed class Plugin : IDalamudPlugin
         // Enter, as in the game: into the reply box of the Parley window in
         // use, instead of the game's chat. Never while one of the game's own
         // text boxes is being typed in, where Enter is how that is sent.
-        var enterTarget = Config.EnterOpensReply && chatInUse is { IsOnScreen: true, AcceptsEnter: true } && !GameTextInputActive() ? chatInUse : null;
-        enterKeyHeld = TakeKey(enterTarget != null && !ctrl && !alt, VirtualKey.RETURN, enterKeyHeld, () => enterTarget!.StartTyping());
+        // While Parley stands in for the game's chat, Enter anywhere else opens
+        // General's box, the way it opens the game's chat box.
+        Action? onEnter = null;
+        if (!GameTextInputActive())
+        {
+            if (Config.EnterOpensReply && chatInUse is { IsOnScreen: true, AcceptsEnter: true } window) onEnter = window.StartTyping;
+            else if (ReplacingGameChat && MainWindow is { IsOnScreen: true, AcceptsEnter: true }) onEnter = MainWindow.StartTyping;
+            else if (ReplacingGameChat) onEnter = () => MainWindow.TypeInGeneral();
+        }
+        enterKeyHeld = TakeKey(onEnter != null && !ctrl && !alt, VirtualKey.RETURN, enterKeyHeld, () => onEnter!());
 
         // Alt+Enter, from anywhere: Parley, ready to type, opened first if need be.
         altEnterHeld = TakeKey(Config.AltEnterOpensParley && alt && !ctrl && Store.HasCharacter && !GameTextInputActive(),
@@ -745,6 +1050,10 @@ public sealed class Plugin : IDalamudPlugin
             case "friends":
                 ReportFriends();
                 return;
+
+            case "tabs":
+                ReportTabs();
+                return;
         }
 
         if (!Store.HasCharacter)
@@ -804,17 +1113,112 @@ public sealed class Plugin : IDalamudPlugin
         FriendList.RequestIfStale(Config.FriendRefreshSeconds);
     }
 
-    private void WriteConfig()
+    /// <summary>The kinds of line /parley tabs checks, by the names the game's log filter settings use for them.</summary>
+    private static readonly (string Name, ushort Info)[] TabReportKinds =
+    [
+        ("Say", ChatLogFilter.Pack(10)), ("Shout", ChatLogFilter.Pack(11)), ("Yell", ChatLogFilter.Pack(30)),
+        ("Tell", ChatLogFilter.Pack(13)), ("Party", ChatLogFilter.Pack(14)), ("Alliance", ChatLogFilter.Pack(15)),
+        ("Free Company", ChatLogFilter.Pack(24)),
+        ("LS1", ChatLogFilter.Pack(16)), ("LS2", ChatLogFilter.Pack(17)), ("LS3", ChatLogFilter.Pack(18)), ("LS4", ChatLogFilter.Pack(19)),
+        ("LS5", ChatLogFilter.Pack(20)), ("LS6", ChatLogFilter.Pack(21)), ("LS7", ChatLogFilter.Pack(22)), ("LS8", ChatLogFilter.Pack(23)),
+        ("CWLS1", ChatLogFilter.Pack(37)), ("CWLS2", ChatLogFilter.Pack(101)), ("CWLS3", ChatLogFilter.Pack(102)), ("CWLS4", ChatLogFilter.Pack(103)),
+        ("CWLS5", ChatLogFilter.Pack(104)), ("CWLS6", ChatLogFilter.Pack(105)), ("CWLS7", ChatLogFilter.Pack(106)), ("CWLS8", ChatLogFilter.Pack(107)),
+        ("Novice Network", ChatLogFilter.Pack(27)), ("Emotes", ChatLogFilter.Pack(29)), ("Custom emotes", ChatLogFilter.Pack(28)),
+        ("Echo", ChatLogFilter.Pack(56)), ("System messages", ChatLogFilter.Pack(57)), ("Errors", ChatLogFilter.Pack(60)),
+        ("NPC dialogue", ChatLogFilter.Pack(61)), ("NPC announcements", ChatLogFilter.Pack(68)), ("Loot", ChatLogFilter.Pack(62)),
+        ("Progress", ChatLogFilter.Pack(64)), ("Crafting", ChatLogFilter.Pack(66)), ("Gathering", ChatLogFilter.Pack(67)),
+        ("FC announcements", ChatLogFilter.Pack(69)), ("FC logins", ChatLogFilter.Pack(70)), ("Retainer sales", ChatLogFilter.Pack(71)),
+        ("Your damage", ChatLogFilter.Pack(41, source: 1)), ("Your healing", ChatLogFilter.Pack(45, source: 1)),
+    ];
+
+    /// <summary>
+    /// What Parley reads of the game's chat tabs and chat box, to compare with
+    /// the game's own log filter settings before General Chat is built on it.
+    /// </summary>
+    private void ReportTabs()
+    {
+        var (channel, label, tellTo) = GameChatTabs.CurrentChannel();
+        var on = label.Length > 0 ? $"\"{label}\"" : "an unnamed channel";
+        Services.Chat.Print($"Your chat box is on {on} (channel {channel}){(tellTo.Length > 0 ? $", with tells going to {tellTo}" : string.Empty)}.", "Parley");
+
+        var tabs = GameChatTabs.Read();
+        if (tabs.Count == 0)
+        {
+            Services.Chat.PrintError("Parley could not find the game's chat tabs.", "Parley");
+            return;
+        }
+
+        foreach (var tab in tabs)
+        {
+            var title = $"Tab {tab.Index + 1} \"{tab.Name}\"{(tab.InUse ? string.Empty : " (not in use)")}";
+            if (tab.Hidden == null)
+            {
+                Services.Chat.Print($"{title}: Parley could not read which lines it shows.", "Parley");
+                continue;
+            }
+
+            var shown = new List<string>();
+            var left = new List<string>();
+            foreach (var (name, info) in TabReportKinds) (ChatLogFilter.Shows(tab.Hidden, info) ? shown : left).Add(name);
+
+            var summary = left.Count == 0 ? "shows everything Parley checked"
+                : shown.Count == 0 ? "shows none of what Parley checked"
+                : left.Count <= shown.Count ? "shows all but " + string.Join(", ", Grouped(left))
+                : "shows only " + string.Join(", ", Grouped(shown));
+            Services.Chat.Print($"{title}: {summary}.", "Parley");
+        }
+
+        Services.Chat.Print("Compare these with the game's log filters, in Character Configuration → Log Window Settings.", "Parley");
+
+        // All eight linkshells, or all eight cross-world ones, read as one.
+        static IEnumerable<string> Grouped(List<string> names)
+        {
+            var ls = names.Count(name => name.StartsWith("LS", StringComparison.Ordinal));
+            var cwls = names.Count(name => name.StartsWith("CWLS", StringComparison.Ordinal));
+            foreach (var name in names)
+            {
+                if (ls == 8 && name.StartsWith("LS", StringComparison.Ordinal)) { if (name == "LS1") yield return "Linkshells"; continue; }
+                if (cwls == 8 && name.StartsWith("CWLS", StringComparison.Ordinal)) { if (name == "CWLS1") yield return "Cross-world linkshells"; continue; }
+                yield return name;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Saves the settings. Only turning them into text happens here, on the
+    /// game's thread, where they belong. Putting that on disk can stall for a
+    /// moment, which on the game's thread would be a moment the game stood
+    /// still, so it happens on a worker, one write after another.
+    /// </summary>
+    /// <param name="wait">Wait for the file to be written, as when Parley is closing.</param>
+    private void WriteConfig(bool wait = false)
     {
         configDirtySince = 0;
+        string json;
         try
         {
-            ConfigurationFile.Save(configPath, Config);
+            json = ConfigurationFile.Serialize(Config);
         }
         catch (Exception ex)
         {
             Services.Log.Error(ex, "Could not save Parley's settings.");
+            return;
         }
+
+        var path = configPath;
+        configWrite = configWrite.ContinueWith(_ =>
+        {
+            try
+            {
+                ConfigurationFile.Write(path, json);
+            }
+            catch (Exception ex)
+            {
+                LogIoError("save its settings", ex);
+            }
+        }, TaskScheduler.Default);
+
+        if (wait) configWrite.Wait(5000);
     }
 
     /// <summary>History and settings I/O happens off the framework thread; this is safe to call from there.</summary>

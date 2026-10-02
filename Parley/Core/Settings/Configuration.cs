@@ -34,6 +34,66 @@ public enum TimestampStyle
     /// <summary>A centred time only where a gap in the conversation makes it useful.</summary>
     Dividers,
     EveryMessage,
+
+    /// <summary>No times, for the most room: only a divider where the day changes, and the time when a message is pointed at.</summary>
+    None,
+}
+
+/// <summary>The parts of the window that can each have a look of their own: General, and each kind of conversation.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<LookSection>))]
+public enum LookSection
+{
+    General,
+    Tells,
+    FreeCompany,
+    Linkshells,
+    CrossWorld,
+}
+
+/// <summary>How a section's conversations are picked from: tabs across the top, or a list down the side.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<TabDirection>))]
+public enum TabDirection
+{
+    /// <summary>A row of tabs above the conversation, as General has, which leaves it the window's whole width.</summary>
+    Horizontal,
+
+    /// <summary>A list down the side, with room for the last message under each name.</summary>
+    Vertical,
+}
+
+/// <summary>How one part of the window shows its messages.</summary>
+public sealed class SectionLook
+{
+    /// <summary>Bubbles or a log. General is always a log.</summary>
+    public MessageStyle Layout { get; set; } = MessageStyle.Bubbles;
+
+    public TimestampStyle Timestamps { get; set; } = TimestampStyle.Dividers;
+
+    /// <summary>Size of everything in it, text and spacing alike: 1 is as set under Text, 0.6 to 1.6.</summary>
+    public float Scale { get; set; } = 1f;
+
+    /// <summary>The conversations in the main window, where room is short: tabs across the top unless asked otherwise.</summary>
+    public TabDirection MainWindowTabs { get; set; } = TabDirection.Horizontal;
+
+    /// <summary>The conversations in a window of their own, which can be shaped to suit either.</summary>
+    public TabDirection PopOutTabs { get; set; } = TabDirection.Vertical;
+
+    /// <summary>Tabs in the direction set for the main window or for a popped-out one.</summary>
+    public TabDirection TabsIn(bool poppedOut) => poppedOut ? PopOutTabs : MainWindowTabs;
+
+    public SectionLook Copy() => new()
+    {
+        Layout = Layout, Timestamps = Timestamps, Scale = Scale, MainWindowTabs = MainWindowTabs, PopOutTabs = PopOutTabs,
+    };
+
+    public void Clamp()
+    {
+        if (!Enum.IsDefined(Layout)) Layout = MessageStyle.Bubbles;
+        if (!Enum.IsDefined(Timestamps)) Timestamps = TimestampStyle.Dividers;
+        Scale = float.IsFinite(Scale) ? Math.Clamp(Scale, Configuration.MinSectionScale, Configuration.MaxSectionScale) : 1f;
+        if (!Enum.IsDefined(MainWindowTabs)) MainWindowTabs = TabDirection.Horizontal;
+        if (!Enum.IsDefined(PopOutTabs)) PopOutTabs = TabDirection.Vertical;
+    }
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<FontChoice>))]
@@ -130,6 +190,20 @@ public sealed class Configuration
     public bool HideLinkshellsFromGameChat { get; set; }
     public bool HideCrossWorldFromGameChat { get; set; }
     public bool HideFreeCompanyFromGameChat { get; set; }
+
+    /// <summary>
+    /// Adds a General tab to the main window: the game's own chat log, tab for
+    /// tab as the game's chat tabs are set up, in the game's Log Text Colors,
+    /// with a box that types into the game's chat box channel. Being tested, so off by default.
+    /// </summary>
+    public bool GeneralChat { get; set; }
+
+    /// <summary>
+    /// With General on: Parley stands in for the game's chat log. The game's
+    /// chat windows are hidden, Enter opens General's box, and Parley opens on
+    /// General when you log in.
+    /// </summary>
+    public bool ReplaceGameChat { get; set; }
     public bool ShowInCutscenes { get; set; }
     public bool ShowInGpose { get; set; }
     public bool ShowWhenUiHidden { get; set; }
@@ -173,8 +247,69 @@ public sealed class Configuration
 
     /// <summary>Tint each tab group with the colour the game's chat log uses for that channel.</summary>
     public bool UseGameChatColours { get; set; } = true;
+    // The look every section shares while SameLookEverywhere is on: layout,
+    // times, size and tabs. General ignores the layout, as it is always a
+    // log, and the tabs, as its are the game's.
     public MessageStyle MessageStyle { get; set; } = MessageStyle.Bubbles;
     public TimestampStyle Timestamps { get; set; } = TimestampStyle.Dividers;
+    public float UiScale { get; set; } = 1f;
+    public TabDirection MainWindowTabs { get; set; } = TabDirection.Horizontal;
+    public TabDirection PopOutTabs { get; set; } = TabDirection.Vertical;
+
+    /// <summary>Tabs across the top show each conversation's picture alone rather than its name, to fit more in.</summary>
+    public bool TabIconsOnly { get; set; }
+
+    public const float MinSectionScale = 0.6f;
+    public const float MaxSectionScale = 1.6f;
+
+    /// <summary>One look for every section. Off: each has its own, in <see cref="SectionLooks"/>.</summary>
+    public bool SameLookEverywhere { get; set; } = true;
+
+    public Dictionary<LookSection, SectionLook> SectionLooks { get; set; } = [];
+
+    /// <summary>The conversation list shows icons only while the window is too narrow for names.</summary>
+    public bool ShrinkListWhenNarrow { get; set; } = true;
+
+    [JsonIgnore]
+    private readonly SectionLook sharedLook = new();
+
+    /// <summary>
+    /// How a section shows its messages: the shared look, or with
+    /// <see cref="SameLookEverywhere"/> off its own, which starts as a copy of
+    /// the shared one.
+    /// </summary>
+    public SectionLook LookFor(LookSection section)
+    {
+        if (SameLookEverywhere)
+        {
+            sharedLook.Layout = MessageStyle;
+            sharedLook.Timestamps = Timestamps;
+            sharedLook.Scale = UiScale;
+            sharedLook.MainWindowTabs = MainWindowTabs;
+            sharedLook.PopOutTabs = PopOutTabs;
+            return sharedLook;
+        }
+
+        SectionLooks ??= [];
+        if (!SectionLooks.TryGetValue(section, out var look) || look == null)
+        {
+            look = new SectionLook
+            {
+                Layout = MessageStyle, Timestamps = Timestamps, Scale = UiScale, MainWindowTabs = MainWindowTabs, PopOutTabs = PopOutTabs,
+            };
+            SectionLooks[section] = look;
+        }
+        return look;
+    }
+
+    public static LookSection SectionOf(ChannelGroup group) => group switch
+    {
+        ChannelGroup.Tell => LookSection.Tells,
+        ChannelGroup.FreeCompany => LookSection.FreeCompany,
+        ChannelGroup.Linkshell => LookSection.Linkshells,
+        _ => LookSection.CrossWorld,
+    };
+
     public bool Use24Hour { get; set; } = true;
 
     /// <summary>Give each person a colour of their own, worked out from their name. Off: names are in the channel's colour.</summary>
@@ -189,6 +324,26 @@ public sealed class Configuration
     public FontChoice Font { get; set; } = FontChoice.Dalamud;
     public float FontScale { get; set; } = 1f;
     public float WindowOpacity { get; set; } = 1f;
+
+    // ---- Window edges and fading, so the window can look like the game's chat log ----
+    public bool ShowTitleBar { get; set; } = true;
+    public bool WindowBorder { get; set; } = true;
+
+    /// <summary>The background fades out towards the edges instead of ending at a hard line.</summary>
+    public bool SoftEdges { get; set; }
+
+    /// <summary>How far in from the edge the soft background fades, in unscaled pixels.</summary>
+    public float SoftEdgeWidth { get; set; } = 18f;
+
+    /// <summary>The window fades back once nothing has happened in it for <see cref="FadeAfterSeconds"/>.</summary>
+    public bool FadeWhenIdle { get; set; }
+    public int FadeAfterSeconds { get; set; } = 10;
+
+    /// <summary>The background's opacity while faded, 0 to 1.</summary>
+    public float IdleOpacity { get; set; } = 0.15f;
+
+    /// <summary>The text's opacity while faded, 0.2 to 1.</summary>
+    public float IdleTextOpacity { get; set; } = 1f;
     public float CornerRounding { get; set; } = 6f;
     public float SidebarWidth { get; set; } = 200f;
     public bool SidebarCollapsed { get; set; }
@@ -196,6 +351,12 @@ public sealed class Configuration
 
     // ---- State ----
     public ChannelGroup LastGroup { get; set; } = ChannelGroup.Tell;
+
+    /// <summary>Whether the main window was on General rather than <see cref="LastGroup"/>.</summary>
+    public bool GeneralShown { get; set; }
+
+    /// <summary>Which of the game's chat tabs General was showing, 0 to 3.</summary>
+    public int GeneralTab { get; set; }
 
     /// <summary>The alert settings for one kind of conversation, created with the defaults if there are none yet.</summary>
     public ChannelAlert Alert(ChannelGroup group)
@@ -271,6 +432,10 @@ public sealed class Configuration
         MaxLoadedMessages = Math.Clamp(MaxLoadedMessages, 100, 5000);
         FontScale = float.IsFinite(FontScale) ? Math.Clamp(FontScale, 0.7f, 2f) : 1f;
         WindowOpacity = float.IsFinite(WindowOpacity) ? Math.Clamp(WindowOpacity, 0.3f, 1f) : 1f;
+        SoftEdgeWidth = float.IsFinite(SoftEdgeWidth) ? Math.Clamp(SoftEdgeWidth, 4f, 60f) : 18f;
+        FadeAfterSeconds = Math.Clamp(FadeAfterSeconds, 2, 120);
+        IdleOpacity = float.IsFinite(IdleOpacity) ? Math.Clamp(IdleOpacity, 0f, 1f) : 0.15f;
+        IdleTextOpacity = float.IsFinite(IdleTextOpacity) ? Math.Clamp(IdleTextOpacity, 0.2f, 1f) : 1f;
         CornerRounding = float.IsFinite(CornerRounding) ? Math.Clamp(CornerRounding, 0f, 16f) : 6f;
         SidebarWidth = float.IsFinite(SidebarWidth) ? Math.Clamp(SidebarWidth, 120f, 480f) : 200f;
         CustomColours ??= [];
@@ -278,8 +443,14 @@ public sealed class Configuration
         if (!GameThemes.IsKnown(GameThemeOverride)) GameThemeOverride = -1;
         if (!Enum.IsDefined(MessageStyle)) MessageStyle = MessageStyle.Bubbles;
         if (!Enum.IsDefined(Timestamps)) Timestamps = TimestampStyle.Dividers;
+        UiScale = float.IsFinite(UiScale) ? Math.Clamp(UiScale, MinSectionScale, MaxSectionScale) : 1f;
+        if (!Enum.IsDefined(MainWindowTabs)) MainWindowTabs = TabDirection.Horizontal;
+        if (!Enum.IsDefined(PopOutTabs)) PopOutTabs = TabDirection.Vertical;
+        SectionLooks ??= [];
+        foreach (var look in SectionLooks.Values) look?.Clamp();
         if (!Enum.IsDefined(Font)) Font = FontChoice.Dalamud;
         if (!Enum.IsDefined(DtrMode)) DtrMode = DtrMode.Auto;
         if (!Enum.IsDefined(LastGroup)) LastGroup = ChannelGroup.Tell;
+        GeneralTab = Math.Clamp(GeneralTab, 0, ChatLogFilter.TabCount - 1);
     }
 }

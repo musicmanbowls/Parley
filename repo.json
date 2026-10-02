@@ -4,6 +4,7 @@
     "Name": "Parley",
     "InternalName": "Parley",
     "AssemblyVersion": "1.0.0.0",
+    "TestingAssemblyVersion": "1.1.0.0",
     "Punchline": "A tabbed messenger for tells, your free company, linkshells and cross-world linkshells.",
     "Description": "Keeps every tell, your free company, and each linkshell and cross-world linkshell in its own conversation, grouped under tabs with a sidebar to switch between them. Remembers history per character, counts what you have not read, shows which tells are with friends and whether they are online, busy or in a duty, and plays a sound of your choosing for each kind of chat. Clickable links, item tooltips, search, symbols and pop-out windows included. Can follow Dalamud's style, the game's UI theme or your Umbra colour profile, and an optional Umbra companion adds a toolbar widget that shows unread messages.",
     "ApplicableVersion": "any",
@@ -18,16 +19,18 @@
       "umbra"
     ],
     "DalamudApiLevel": 15,
+    "TestingDalamudApiLevel": 15,
     "LoadPriority": 0,
     "IconUrl": "https://raw.githubusercontent.com/musicmanbowls/Parley/main/Parley/images/icon.png",
     "Changelog": "First public release: tells, free company, linkshells and cross-world linkshells in tabs, with saved history and search, clickable links and item tooltips, linking items in replies, highlight and copy, symbols, friend status, Enter and Alt+Enter like the game's chat, pop-out windows, the game's UI themes, and correct speech bubbles for chats kept out of the game's chat log.",
+    "TestingChangelog": "Testing build. New: an optional General tab with the game's own chat log, using its tabs, filters and colours; its + adds a game chat tab and its cog opens the game's Log Window Settings. Parley can also stand in for the game's chat window, so Enter, Send Tell and anything you start typing come to Parley (Settings, General, General chat). Conversations are picked from tabs across the top or a list down the side, chosen per section, and the tabs can show pictures only. Each section can have its own layout, timestamps and size, and the window can hide its title bar and border, soften its edges and fade when not in use. Up and Down bring back what you sent, an auto-translate picker sits beside each reply box (or press Tab), and settings are saved without holding up the game.",
     "IsHide": false,
     "IsTestingExclusive": false,
     "AcceptsFeedback": false,
     "DownloadCount": 0,
-    "LastUpdate": 1790871781,
+    "LastUpdate": 1790908068,
     "DownloadLinkInstall": "https://github.com/musicmanbowls/Parley/releases/latest/download/latest.zip",
     "DownloadLinkUpdate": "https://github.com/musicmanbowls/Parley/releases/latest/download/latest.zip",
-    "DownloadLinkTesting": "https://github.com/musicmanbowls/Parley/releases/latest/download/latest.zip"
+    "DownloadLinkTesting": "https://github.com/musicmanbowls/Parley/releases/download/v1.1.0.0/latest.zip"
   }
 ]

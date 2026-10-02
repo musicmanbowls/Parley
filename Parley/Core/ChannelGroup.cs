@@ -36,6 +36,16 @@ public static class ChannelGroups
         _ => group.ToString(),
     };
 
+    /// <summary>A shorter name, for a tab strip too narrow for the full ones.</summary>
+    public static string ShortLabel(this ChannelGroup group) => group switch
+    {
+        ChannelGroup.Tell => "Tells",
+        ChannelGroup.Linkshell => "LS",
+        ChannelGroup.CrossWorld => "CWLS",
+        ChannelGroup.FreeCompany => "FC",
+        _ => group.ToString(),
+    };
+
     /// <summary>How many slots the game has for this kind. A character can only be in one free company.</summary>
     public static int Slots(this ChannelGroup group) => group switch
     {

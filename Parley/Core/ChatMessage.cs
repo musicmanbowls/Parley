@@ -39,6 +39,13 @@ public sealed class ChatMessage
     /// </summary>
     public byte[]? Rich;
 
+    /// <summary>
+    /// For a line of the game's chat log in General: the game's line info, the
+    /// kind of chat with who it is from and to (see <see cref="ChatLogFilter.Pack"/>).
+    /// Zero for messages in a conversation.
+    /// </summary>
+    public ushort LogInfo;
+
     public bool IsOutgoing => (Flags & MessageFlags.Outgoing) != 0;
     public bool IsNotice => (Flags & MessageFlags.Notice) != 0;
     public bool IsError => (Flags & MessageFlags.Error) != 0;

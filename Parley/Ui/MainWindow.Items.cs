@@ -98,7 +98,8 @@ internal sealed partial class MainWindow
         itemTooltipSeen = false;
     }
 
-    private void DrawItemMenu(Conversation conversation)
+    /// <param name="conversation">Whose reply box "Link in your reply" fills, or null for General's box.</param>
+    private void DrawItemMenu(Conversation? conversation)
     {
         if (!BeginMenu(ItemMenu)) return;
         try
@@ -133,7 +134,7 @@ internal sealed partial class MainWindow
                 if (info.Material && ImGui.MenuItem("Recipes that use this")) GameLinks.SearchRecipes(info.Id);
             }
 
-            var canReply = selected != null && selected.CanSend && store.HasCharacter;
+            var canReply = store.HasCharacter && (conversation == null || conversation.CanSend);
             if (ImGui.MenuItem("Link in your reply", false, canReply)) InsertIntoDraft(conversation, plugin.ItemLinkToken(link.Id, info.Name) + " ");
             if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
                 ImGui.SetTooltip("Puts this item in your reply box. It is sent as a real item link the other person can hover and click.");

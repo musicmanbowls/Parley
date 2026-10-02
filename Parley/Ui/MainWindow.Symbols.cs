@@ -22,7 +22,7 @@ internal sealed partial class MainWindow
     private Symbols.Symbol[][]? drawableSymbols;
     private int drawableStamp = -1;
 
-    private void DrawSymbolButton(Conversation conversation, bool enabled, float size)
+    private void DrawSymbolButton(Conversation? conversation, bool enabled, float size)
     {
         if (Painter.IconButton("##symbolbutton", FontAwesomeIcon.Heart, enabled ? "Symbols" : string.Empty, palette, size, enabled: enabled))
             ImGui.OpenPopup(SymbolMenu);
@@ -38,7 +38,7 @@ internal sealed partial class MainWindow
         }
     }
 
-    private void DrawSymbolPicker(Conversation conversation)
+    private void DrawSymbolPicker(Conversation? conversation)
     {
         var groups = DrawableSymbols();
         var cell = ImGui.GetFrameHeight() + (6f * scale);
@@ -91,7 +91,7 @@ internal sealed partial class MainWindow
         return clicked;
     }
 
-    private void Pick(Conversation conversation, string symbol)
+    private void Pick(Conversation? conversation, string symbol)
     {
         InsertIntoDraft(conversation, symbol);
         config.UsedSymbol(symbol);

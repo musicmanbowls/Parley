@@ -50,6 +50,48 @@ internal sealed class ChatCapture : IDisposable
         {
             Services.Log.Error(ex, "Could not process a chat message.");
         }
+
+        if (!plugin.Config.GeneralChat || !plugin.Store.HasCharacter) return;
+        try
+        {
+            if (GeneralLine(message) is { } line) plugin.General.Add(line);
+        }
+        catch (Exception ex)
+        {
+            Services.Log.Error(ex, "Could not add a line to General.");
+        }
+    }
+
+    /// <summary>
+    /// A line for General, written the way the game's chat log writes that
+    /// kind of line: "[FC]&lt;Name&gt; message", "Name &gt;&gt; message" and so on.
+    /// </summary>
+    private ChatMessage? GeneralLine(IHandleableChatMessage message)
+    {
+        var kind = (int)message.LogKind;
+        var format = LogFormats.For(kind);
+
+        var payloads = new List<Payload>();
+        if (format.Before.Length > 0) payloads.Add(new TextPayload(format.Before));
+        if (format.HasSender)
+        {
+            payloads.AddRange(message.Sender.Payloads);
+            if (format.Between.Length > 0) payloads.Add(new TextPayload(format.Between));
+        }
+        payloads.AddRange(message.Message.Payloads);
+        if (format.After.Length > 0) payloads.Add(new TextPayload(format.After));
+
+        var line = new SeString(payloads);
+        var text = Tidy(new StringBuilder(line.TextValue));
+        if (text.Length == 0) return null;
+
+        return new ChatMessage
+        {
+            Timestamp = plugin.Store.Now,
+            Text = text,
+            Rich = Encode(line),
+            LogInfo = ChatLogFilter.Pack(kind, (int)message.TargetKind, (int)message.SourceKind),
+        };
     }
 
     private void Handle(IHandleableChatMessage message)

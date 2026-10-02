@@ -1,5 +1,7 @@
 using System.Text;
+using Dalamud.Game.Text;
 using Dalamud.Game.Text.SeStringHandling;
+using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.Utility;
 using Parley.Core;
 
@@ -40,10 +42,38 @@ internal static class ItemLinks
         return token;
     }
 
+    /// <summary>
+    /// The stand-in for an auto-translate phrase: the phrase between the game's
+    /// auto-translate brackets, as the game shows one. It goes to the game as
+    /// a real auto-translate phrase, which each reader sees in their own language.
+    /// </summary>
+    public static string Phrase(uint group, uint key, string text)
+    {
+        var token = PhraseOpen + text.Trim().Replace(' ', ' ') + PhraseClose;
+        if (Links.ContainsKey(token)) return token;
+
+        try
+        {
+            Links[token] = new AutoTranslatePayload(group, key).Encode();
+        }
+        catch (Exception ex)
+        {
+            Services.Log.Warning(ex, "Could not make an auto-translate phrase.");
+        }
+        return token;
+    }
+
+    private const char PhraseOpen = (char)SeIconChar.AutoTranslateOpen;
+    private const char PhraseClose = (char)SeIconChar.AutoTranslateClose;
+
+    /// <summary>Whether a text might hold a stand-in at all, so most text skips the search.</summary>
+    private static bool HasStandIns(string text) =>
+        Links.Count > 0 && (text.IndexOf(Marker) >= 0 || text.IndexOf(PhraseOpen) >= 0);
+
     /// <summary>How many more bytes the stand-ins in a text take once they are links.</summary>
     public static int ExtraBytes(string text)
     {
-        if (Links.Count == 0 || text.IndexOf(Marker) < 0) return 0;
+        if (!HasStandIns(text)) return 0;
 
         var extra = 0;
         foreach (var (token, link) in Links)
@@ -61,7 +91,7 @@ internal static class ItemLinks
     /// <summary>Runs <paramref name="clean"/> over the text between stand-ins, leaving the stand-ins themselves alone.</summary>
     public static string AroundTokens(string text, Func<string, string> clean)
     {
-        if (Links.Count == 0 || text.IndexOf(Marker) < 0) return clean(text);
+        if (!HasStandIns(text)) return clean(text);
 
         var builder = new StringBuilder(text.Length);
         var at = 0;
@@ -84,7 +114,7 @@ internal static class ItemLinks
     /// <summary>The line as bytes for the game, with each stand-in replaced by its link.</summary>
     public static byte[] Encode(string line)
     {
-        if (Links.Count == 0 || line.IndexOf(Marker) < 0) return Encoding.UTF8.GetBytes(line);
+        if (!HasStandIns(line)) return Encoding.UTF8.GetBytes(line);
 
         var bytes = new List<byte>(line.Length + 64);
         var at = 0;
