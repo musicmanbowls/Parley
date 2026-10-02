@@ -224,24 +224,41 @@ internal static partial class Scenarios
         s.Plugin.Friends[("Yuna Hoshizora", Demo.Jenova)] = new FriendStatus(true, true, true, false, false, Demo.Gilgamesh, "Gilgamesh");
 
         s.Open(s.Tell("Mira Thorne"));
-        s.Shot("list");
-        s.Check(s.Stage.Find("Friend · In a duty: Second Board of the Unbroken") != null, "a friend's tell says they are in a duty, and which");
+        s.Check(s.Stage.Find("Friend ·") == null, "where they are only shows when asked for, to leave the messages the room");
+        PointAtTab(s, "Mira Thorne");
+        s.Shot("banner");
+        s.Check(s.Stage.Find("Friend · In a duty: Second Board of the Unbroken") != null, "pointing at a friend's tab says they are in a duty, and which");
         s.Check(s.Stage.Find("is in a duty and may not see a tell") != null, "the reply box warns that a friend in a duty may not see it");
 
         s.Open(s.Tell("Oskar Lindqvist"));
+        PointAtTab(s, "Oskar Lindqvist");
         s.Check(s.Stage.Find("Friend · Offline") != null, "and when they are offline");
         s.Check(s.Stage.Find("is offline, so a tell will not reach them") != null, "the reply box warns before writing to an offline friend");
 
         s.Open(s.Tell("Yuna Hoshizora"));
+        PointAtTab(s, "Yuna Hoshizora");
         s.Check(s.Stage.Find("Busy on Gilgamesh") != null, "busy, and visiting another world");
         s.Check(s.Stage.Find("is busy and may not see a tell") != null, "with a warning for busy too");
 
-        s.Open(s.Tell("Tobias Greywater"));
+        PointAtTab(s, "Tobias Greywater");
         s.Check(s.Stage.Find("Friend ·") == null, "someone not on the friend list gets nothing");
 
-        s.Config.ShowFriendStatus = false;
+        s.Config.MainWindowTabs = TabDirection.Vertical;
         s.Open(s.Tell("Mira Thorne"));
+        PointAtTab(s, "Mira Thorne");
+        s.Shot("list-banner");
+        s.Check(s.Stage.Find("Friend · In a duty") != null, "the list down the side shows the same when a row is pointed at");
+
+        s.Config.ShowFriendStatus = false;
+        PointAtTab(s, "Mira Thorne");
         s.Check(s.Stage.Find("Friend ·") == null, "and it can be turned off");
+    }
+
+    /// <summary>Rests the cursor on a conversation's tab, or its row in the list: the first place its name is drawn.</summary>
+    private static void PointAtTab(Scenario s, string name)
+    {
+        s.Stage.MoveTo(s.Stage.Need(name).Centre);
+        s.Stage.Frames(2);
     }
 
     private static void GameThemeLooks(Scenario s)
@@ -263,5 +280,255 @@ internal static partial class Scenarios
         s.Stage.Frames(3);
         s.Check(s.Plugin.Theme.Palette.WindowBg == GameThemes.For(GameThemes.ClassicFf).WindowBg, "a theme picked for Parley wins over the game's");
         s.Config.GameThemeOverride = -1;
+    }
+
+    /// <summary>A filter table that leaves out <paramref name="hide"/>, or with <paramref name="showOnly"/> everything else.</summary>
+    private static byte[] Filter(int[]? hide = null, int[]? showOnly = null)
+    {
+        var table = new byte[4096];
+        if (showOnly != null)
+        {
+            Array.Fill(table, (byte)0xFF);
+            foreach (var kind in showOnly) table[ChatLogFilter.Pack(kind) >> 3] &= (byte)~(1 << (ChatLogFilter.Pack(kind) & 7));
+        }
+        foreach (var kind in hide ?? []) table[ChatLogFilter.Pack(kind) >> 3] |= (byte)(1 << (ChatLogFilter.Pack(kind) & 7));
+        return table;
+    }
+
+    private static void GameLine(Scenario s, int kind, string text) =>
+        s.Plugin.General.Add(new ChatMessage { Timestamp = s.Plugin.Store.Now, Text = text, LogInfo = ChatLogFilter.Pack(kind) });
+
+    private static void GeneralChat(Scenario s)
+    {
+        Demo.Seed(s.Stage);
+        s.Config.JumpToUnreadOnOpen = false;
+        s.Config.ReleaseKeyboardOnEnter = false;
+
+        // The game's tabs as a player might have them: Event takes NPC dialogue, Battle the echoes.
+        s.Plugin.General.SetTabs(
+        [
+            new GameChatTab(0, "General", true, Filter(hide: [61])),
+            new GameChatTab(1, "Battle", true, Filter(showOnly: [56])),
+            new GameChatTab(2, "Event", true, Filter(showOnly: [61])),
+            new GameChatTab(3, string.Empty, false, Filter(showOnly: [])),
+        ]);
+        GameLine(s, 10, "Bren Halloway: anyone up for a hunt train?");
+        GameLine(s, 14, "(Tobias Greywater) pulling in five");
+        GameLine(s, 24, "[FC]<Hana Birchwood> house party tonight!");
+        GameLine(s, 16, "[1]<Pell Marrow> selling cordials");
+        GameLine(s, 13, "Yuna Hoshizora >> are you around?");
+        GameLine(s, 57, "You have 3 unread letters.");
+        GameLine(s, 61, "Tataru: Welcome back!");
+        GameLine(s, 56, "check, check");
+
+        s.Open(s.Tell("Mira Thorne"));
+        s.Check(s.Stage.Find("General") == null, "no General tab until it is turned on");
+
+        s.Config.GeneralChat = true;
+        s.Stage.Frames(2);
+        s.Stage.ClickText("General");
+        s.Stage.Frames(3);
+        s.Shot("general");
+        s.Check(s.Stage.Find("anyone up for a hunt train?") != null, "the game's chat shows in General");
+        s.Check(s.Stage.Find("house party tonight!") != null, "free company lines too");
+        s.Check(s.Stage.Find("Welcome back!") == null, "a line the game's General tab leaves out is left out here as well");
+        s.Check(s.Stage.Find("Battle") != null && s.Stage.Find("Event") != null, "the game's tabs in use are there by name");
+        s.Check(s.Stage.Find("Tab 4") == null, "and a tab the game does not use is not");
+
+        s.Stage.ClickText("Event");
+        s.Stage.Frames(2);
+        s.Check(s.Stage.Find("Welcome back!") != null, "NPC dialogue shows in the tab the game shows it in");
+        s.Check(s.Stage.Find("anyone up for a hunt train?") == null, "and nothing that tab leaves out");
+        s.Shot("event-tab");
+
+        s.Stage.ClickText("General", occurrence: 1);
+        s.Stage.Frames(2);
+        s.Check(s.Stage.Find("Party") != null, "the box shows the channel the game's chat box is on");
+        s.Stage.ClickText("Say something in Party");
+        s.Stage.Type("on my way");
+        s.Stage.Press(ImGuiKey.Enter);
+        s.Check(s.Plugin.SentGeneral.LastOrDefault() == "on my way", "Enter types the line into the game's chat box");
+
+        s.Stage.Type("/em waves");
+        s.Stage.Press(ImGuiKey.Enter);
+        s.Check(s.Plugin.SentGeneral.LastOrDefault() == "/em waves", "commands go to the game as typed");
+
+        // Up and Down go back through what was sent, as in the game's chat box.
+        s.Stage.Type("half typed");
+        s.Stage.Press(ImGuiKey.UpArrow);
+        s.Check(s.Stage.Find("/em waves") != null && s.Stage.Find("half typed") == null, "Up brings back the last line sent");
+        s.Stage.Press(ImGuiKey.UpArrow);
+        s.Check(s.Stage.Find("on my way") != null, "and Up again the one before");
+        s.Stage.Press(ImGuiKey.DownArrow);
+        s.Stage.Press(ImGuiKey.DownArrow);
+        s.Check(s.Stage.Find("half typed") != null, "Down past the newest gives back what was being typed");
+        for (var i = 0; i < 10; i++) s.Stage.Press(ImGuiKey.Backspace);
+
+        s.Stage.ClickText("Party");
+        s.Stage.Frames(2);
+        s.Shot("channels");
+        s.Stage.ClickText("Free Company", occurrence: 1);
+        s.Check(s.Plugin.SentGeneral.LastOrDefault() == "/fc", "picking a channel switches the game's chat box to it");
+
+        s.Stage.ClickText("Tells");
+        s.Stage.Frames(2);
+        s.Check(s.Stage.Find("anyone up for a hunt train?") == null, "a conversation tab leaves General");
+        s.Config.GeneralChat = false;
+    }
+
+    private static void WindowLook(Scenario s)
+    {
+        Demo.Seed(s.Stage);
+        s.Config.JumpToUnreadOnOpen = false;
+        s.Config.GeneralChat = true;
+        s.Plugin.General.SetTabs([new GameChatTab(0, "General", true, Filter())]);
+        GameLine(s, 10, "Bren Halloway: anyone up for a hunt train?");
+        GameLine(s, 14, "(Tobias Greywater) pulling in five");
+        GameLine(s, 24, "[FC]<Hana Birchwood> house party tonight!");
+
+        s.Open(s.Tell("Mira Thorne"));
+        s.Stage.ClickText("General");
+        s.Config.SoftEdges = true;
+        s.Config.ShowTitleBar = false;
+        s.Stage.MoveTo(new Vector2(s.Stage.Width - 4f, s.Stage.Height - 4f));
+        s.Stage.Frames(3);
+        s.Shot("soft-edges");
+        s.Check(s.Stage.Find("anyone up for a hunt train?") != null, "the window still shows its lines with soft edges and no title bar");
+
+        // Left alone, it fades back; pointing at it brings it straight back.
+        s.Config.FadeWhenIdle = true;
+        s.Config.FadeAfterSeconds = 2;
+        s.Config.IdleOpacity = 0f;
+        s.Config.IdleTextOpacity = 0.4f;
+        ImGuiP.FocusWindow(default);
+        s.Stage.Frames(2);
+        System.Threading.Thread.Sleep(2200);
+        s.Stage.Frames(90);
+        s.Shot("faded");
+
+        s.Stage.MoveTo(s.Stage.Need("anyone up for a hunt train?").Centre);
+        s.Stage.Frames(30);
+        s.Shot("woken");
+
+        s.Config.FadeWhenIdle = false;
+        s.Config.SoftEdges = false;
+        s.Config.ShowTitleBar = true;
+        s.Config.GeneralChat = false;
+    }
+
+    private static void ChatHides(Scenario s)
+    {
+        Demo.Seed(s.Stage);
+        s.Config.JumpToUnreadOnOpen = false;
+        s.Config.GeneralChat = true;
+        s.Plugin.General.SetTabs([new GameChatTab(0, "General", true, Filter())]);
+        GameLine(s, 10, "Bren Halloway: anyone up for a hunt train?");
+        s.Open(s.Tell("Mira Thorne"));
+        s.Stage.ClickText("General");
+        s.Stage.Frames(2);
+
+        // Standing in for the game's chat, Parley goes when that would, as in a cutscene.
+        s.Plugin.ReplacingGameChat = true;
+        s.Plugin.ChatHidden = true;
+        s.Stage.Frames(2);
+        s.Check(s.Stage.Find("anyone up for a hunt train?") == null, "standing in for the game's chat, Parley is out of sight when that would be");
+
+        // Enter, or Send Tell on a player, calls it up to type in.
+        s.Plugin.MainWindow.TypeInGeneral(prefill: "/tell Mira Thorne@Jenova ");
+        s.Stage.Frames(3);
+        s.Shot("called-up");
+        s.Check(s.Stage.Find("anyone up for a hunt train?") != null, "Enter calls it up to type in");
+        s.Check(s.Stage.Find("/tell Mira Thorne@Jenova") != null, "and Send Tell starts the tell in its box");
+
+        ImGuiP.FocusWindow(default);
+        System.Threading.Thread.Sleep(600);
+        s.Stage.Frames(3);
+        s.Check(s.Stage.Find("anyone up for a hunt train?") == null, "once the keyboard goes elsewhere it is out of sight again");
+
+        s.Plugin.ChatHidden = false;
+        s.Stage.Frames(2);
+        s.Check(s.Stage.Find("anyone up for a hunt train?") != null, "and back as soon as the game's chat would be");
+
+        s.Plugin.ReplacingGameChat = false;
+        s.Config.GeneralChat = false;
+    }
+
+    private static void SectionLooks(Scenario s)
+    {
+        Demo.Seed(s.Stage);
+        s.Config.JumpToUnreadOnOpen = false;
+
+        // Each section its own: tells as a compact log with no times, the free company in bubbles.
+        s.Config.SameLookEverywhere = false;
+        var tells = s.Config.LookFor(LookSection.Tells);
+        tells.Layout = MessageStyle.Log;
+        tells.Timestamps = TimestampStyle.None;
+        tells.Scale = 0.8f;
+        s.Config.LookFor(LookSection.FreeCompany).Layout = MessageStyle.Bubbles;
+
+        s.Open(s.Tell("Mira Thorne"));
+        s.Stage.Frames(3);
+        s.Shot("tells-log");
+        s.Check(s.Stage.Find("hey, are you around tonight?") != null, "a section with its own look still shows its messages");
+
+        s.Plugin.MainWindow.Show(s.Plugin.Store.Find(ConversationKey.ForLinkshell(ChannelGroup.FreeCompany, "Lanternlight Society")));
+        s.Stage.Frames(3);
+        s.Shot("free-company-bubbles");
+
+        // A narrow window keeps room for the conversation: a list down the side shows icons.
+        tells.MainWindowTabs = TabDirection.Vertical;
+        s.Open(s.Tell("Mira Thorne"));
+        s.Stage.Frames(2);
+        s.Check(s.Stage.Find("Oskar") != null, "the list has names in a wide window");
+        var window = s.Plugin.MainWindow;
+        window.Size = new Vector2(440, 480);
+        window.SizeCondition = ImGuiCond.Always;
+        s.Stage.Frames(3);
+        s.Shot("narrow");
+        s.Check(s.Stage.Find("Oskar") == null, "and only icons once the window is narrow");
+        s.Check(s.Stage.Find("hey, are you around tonight?") != null, "leaving the room to the conversation");
+
+        window.Size = new Vector2(780, 520);
+        s.Stage.Frames(2);
+        window.SizeCondition = ImGuiCond.FirstUseEver;
+        s.Config.SameLookEverywhere = true;
+    }
+
+    private static void AutoTranslatePicker(Scenario s)
+    {
+        Demo.Seed(s.Stage);
+        s.Config.JumpToUnreadOnOpen = false;
+        var mira = s.Tell("Mira Thorne");
+        s.Open(mira);
+
+        // As in the game's chat box: the start of a phrase, then Tab.
+        s.Stage.ClickText("Message Mira Thorne");
+        s.Stage.Type("thanks, Than");
+        s.Stage.Press(ImGuiKey.Tab);
+        s.Stage.Frames(2);
+        s.Shot("tab");
+        s.Check(s.Stage.Find("Thank you.") != null, "Tab opens the auto-translate picker on the word typed");
+        s.Stage.ClickText("Thank you.");
+        s.Stage.Frames(2);
+        s.Check(mira.Draft == "thanks, Thank you. ", "picking a phrase puts it in place of that word");
+
+        // Or the button beside the box, a group, and a phrase.
+        s.Stage.ClickIcon(FontAwesomeIcon.Language);
+        s.Stage.Frames(2);
+        s.Stage.ClickText("Tactics");
+        s.Stage.Frames(2);
+        s.Shot("groups");
+        s.Stage.ClickText("Stack up!");
+        s.Stage.Frames(2);
+        s.Check(mira.Draft.Contains("Stack up!", StringComparison.Ordinal), "the button's picker adds a phrase where the caret was");
+
+        s.Stage.ClickIcon(FontAwesomeIcon.Language);
+        s.Stage.Frames(2);
+        s.Stage.Type("midgard");
+        s.Stage.Frames(2);
+        s.Check(s.Stage.Find("Midgardsormr") != null && s.Stage.Find("Mounts") != null, "searching finds phrases in every group, with the group's name");
+        s.Stage.Press(ImGuiKey.Escape);
+        s.Stage.Frames(2);
+        s.Plugin.Store.SetDraft(mira, string.Empty);
     }
 }

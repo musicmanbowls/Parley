@@ -44,6 +44,9 @@ internal sealed partial class MainWindow
     private readonly Dictionary<byte[], Vector2> objectSizes = new(ReferenceEqualityComparer.Instance);
 
     private TextSelection.Range selectionRange;
+
+    /// <summary>The messages the text on screen comes from, as of the last frame: a conversation's, or a General tab's.</summary>
+    private IReadOnlyList<ChatMessage> textMessages = [];
     private bool hasSelectionRange;
     private bool selecting;
     private Target pressTarget = Target.None;
@@ -120,13 +123,14 @@ internal sealed partial class MainWindow
     // Drawing
     // ------------------------------------------------------------------
 
-    /// <summary>Starts a frame of the message list: forgets last frame's positions and works out the selection afresh.</summary>
-    private void BeginText(Conversation conversation)
+    /// <summary>Starts a frame of a message list: forgets last frame's positions and works out the selection afresh.</summary>
+    private void BeginText(IReadOnlyList<ChatMessage> messages)
     {
         placements.Clear();
         nameSpots.Clear();
         rightClickTaken = false;
-        hasSelectionRange = selection.Resolve(conversation.Messages, out selectionRange);
+        textMessages = messages;
+        hasSelectionRange = selection.Resolve(messages, out selectionRange);
         if (keyColours.Count > 2048) keyColours.Clear();
     }
 
@@ -226,9 +230,10 @@ internal sealed partial class MainWindow
     /// Takes the mouse over the message list once everything in it has been
     /// drawn: one invisible button the size of the list, placed after the
     /// controls drawn over it (scrollbar, jump button, "load earlier") so
-    /// those still get their clicks.
+    /// those still get their clicks. <paramref name="wheel"/> scrolls the list
+    /// up by a number of notches of a given size, for dragging past its edge.
     /// </summary>
-    private void HandleTextMouse(Conversation conversation, Vector2 origin, float width, float height)
+    private void HandleTextMouse(Vector2 origin, float width, float height, Action<float, float> wheel)
     {
         var io = ImGui.GetIO();
         ImGui.SetCursorScreenPos(origin);
@@ -261,14 +266,14 @@ internal sealed partial class MainWindow
 
                 // Dragging past the top or bottom edge scrolls the list.
                 var edge = ImGui.GetTextLineHeight();
-                if (mouse.Y < origin.Y) scroll.Wheel(MathF.Min(2f, (origin.Y - mouse.Y) / edge) * 0.25f, edge);
-                else if (mouse.Y > origin.Y + height) scroll.Wheel(-MathF.Min(2f, (mouse.Y - origin.Y - height) / edge) * 0.25f, edge);
+                if (mouse.Y < origin.Y) wheel(MathF.Min(2f, (origin.Y - mouse.Y) / edge) * 0.25f, edge);
+                else if (mouse.Y > origin.Y + height) wheel(-MathF.Min(2f, (mouse.Y - origin.Y - height) / edge) * 0.25f, edge);
             }
         }
 
         if (ImGui.IsItemDeactivated())
         {
-            if (!pressTarget.IsNone && pressTarget.Same(TargetAt(mouse))) Activate(pressTarget, conversation);
+            if (!pressTarget.IsNone && pressTarget.Same(TargetAt(mouse))) Activate(pressTarget);
             else if (selecting && selection.IsEmpty) selection.Clear();
             selecting = false;
             pressTarget = Target.None;
@@ -380,7 +385,7 @@ internal sealed partial class MainWindow
     }
 
     /// <summary>Does what a click on a link or name does.</summary>
-    private void Activate(Target target, Conversation conversation)
+    private void Activate(Target target)
     {
         if (target.Name >= 0)
         {
@@ -468,8 +473,8 @@ internal sealed partial class MainWindow
     /// <summary>Copies the selection, if there is one. For Ctrl+C.</summary>
     private bool CopySelection()
     {
-        if (selected == null || selection.IsEmpty) return false;
-        var text = selection.Copy(selected.Messages, Parsed);
+        if (selection.IsEmpty) return false;
+        var text = selection.Copy(textMessages, Parsed);
         if (text.Length == 0) return false;
         ImGui.SetClipboardText(text);
         return true;

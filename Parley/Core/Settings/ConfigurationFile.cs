@@ -44,9 +44,14 @@ public static class ConfigurationFile
         return configuration;
     }
 
-    public static void Save(string path, Configuration configuration)
+    public static void Save(string path, Configuration configuration) => Write(path, Serialize(configuration));
+
+    /// <summary>The settings as the file holds them. Done on the thread that owns them, so they cannot change part way.</summary>
+    public static string Serialize(Configuration configuration) => JsonSerializer.Serialize(configuration, CoreJson.Documents.Configuration);
+
+    /// <summary>Puts settings already turned into text on disk. Safe from any thread, one write at a time.</summary>
+    public static void Write(string path, string json)
     {
-        var json = JsonSerializer.Serialize(configuration, CoreJson.Documents.Configuration);
         var directory = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
 

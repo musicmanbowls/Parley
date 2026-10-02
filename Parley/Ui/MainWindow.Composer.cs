@@ -50,6 +50,18 @@ internal sealed partial class MainWindow
     /// </summary>
     private int PlaceCaret(scoped ref ImGuiInputTextCallbackData data)
     {
+        if (data.EventFlag == ImGuiInputTextFlags.CallbackHistory)
+        {
+            RecallSent(ref data);
+            return 0;
+        }
+
+        if (data.EventFlag == ImGuiInputTextFlags.CallbackCompletion)
+        {
+            StartAutoTranslate(ref data);
+            return 0;
+        }
+
         if (caretFrames > 0)
         {
             caretFrames = 0;
@@ -63,6 +75,79 @@ internal sealed partial class MainWindow
         caretBytes = data.CursorPos;
         caretOwner = caretDrawing;
         return 0;
+    }
+
+    /// <summary>Flags for every reply box: the caret is placed by hand, and Up and Down go through what was sent.</summary>
+    private const ImGuiInputTextFlags ReplyBoxFlags = ImGuiInputTextFlags.CallbackAlways | ImGuiInputTextFlags.CallbackHistory | ImGuiInputTextFlags.CallbackCompletion;
+
+    // Where Up and Down have got to in what was sent: an index into the
+    // plugin's list, or -1 for what was being typed, kept aside meanwhile.
+    private int recallAt = -1;
+    private string recallSaved = string.Empty;
+    private string? recallOwner;
+
+    /// <summary>
+    /// Up and Down in a reply box, as in the game's chat box: back through the
+    /// lines sent from any of Parley's boxes, and forward again to what was
+    /// being typed.
+    /// </summary>
+    private void RecallSent(ref ImGuiInputTextCallbackData data)
+    {
+        var sent = plugin.SentHistory;
+        if (sent.Count == 0) return;
+
+        if (!string.Equals(recallOwner, caretDrawing, StringComparison.Ordinal))
+        {
+            recallOwner = caretDrawing;
+            recallAt = -1;
+        }
+
+        string text;
+        if (data.EventKey == ImGuiKey.UpArrow)
+        {
+            if (recallAt < 0)
+            {
+                recallSaved = Encoding.UTF8.GetString(data.BufTextSpan);
+                recallAt = sent.Count - 1;
+            }
+            else if (recallAt > 0)
+            {
+                recallAt--;
+            }
+            else
+            {
+                return;
+            }
+            text = sent[Math.Min(recallAt, sent.Count - 1)];
+        }
+        else if (data.EventKey == ImGuiKey.DownArrow)
+        {
+            if (recallAt < 0) return;
+            recallAt++;
+            if (recallAt >= sent.Count)
+            {
+                recallAt = -1;
+                text = recallSaved;
+            }
+            else
+            {
+                text = sent[recallAt];
+            }
+        }
+        else
+        {
+            return;
+        }
+
+        data.DeleteChars(0, data.BufTextLen);
+        data.InsertChars(0, text);
+    }
+
+    /// <summary>A line has gone: it joins what Up brings back, and Up starts again from the newest.</summary>
+    private void Sent(string text)
+    {
+        plugin.RecordSent(text);
+        recallAt = -1;
     }
 
     /// <summary>Height the reply box will take this frame, so the message list can leave exactly that much.</summary>
@@ -88,7 +173,7 @@ internal sealed partial class MainWindow
 
         var style = ImGui.GetStyle();
         var buttonSize = ImGui.GetFrameHeight();
-        var inputWidth = MathF.Max(40f * scale, ImGui.GetContentRegionAvail().X - (buttonSize * 2f) - (style.ItemSpacing.X * 2f));
+        var inputWidth = MathF.Max(40f * scale, ImGui.GetContentRegionAvail().X - (buttonSize * 3f) - (style.ItemSpacing.X * 3f));
 
         if (focusComposer != null && (focusComposer == WhicheverIsShown || focusComposer == conversation.Key))
         {
@@ -117,7 +202,7 @@ internal sealed partial class MainWindow
             ImGui.SetNextItemWidth(inputWidth);
             ImGui.BeginDisabled(!canSend);
             caretDrawing = conversation.Key;
-            ImGui.InputTextWithHint("##compose", hint, ref draft, MaxDraftLength, ImGuiInputTextFlags.CallbackAlways, placeCaret);
+            ImGui.InputTextWithHint("##compose", hint, ref draft, MaxDraftLength, ReplyBoxFlags, placeCaret);
             entered = ImGui.IsItemDeactivated()
                       && (ImGui.IsKeyPressed(ImGuiKey.Enter) || ImGui.IsKeyPressed(ImGuiKey.KeypadEnter));
             ImGui.EndDisabled();
@@ -138,6 +223,9 @@ internal sealed partial class MainWindow
             store.SetDraft(conversation, draft);
             composerNotice = string.Empty;
         }
+
+        ImGui.SameLine();
+        DrawAutoTranslateButton(conversation, canSend, buttonSize);
 
         ImGui.SameLine();
         DrawSymbolButton(conversation, canSend, buttonSize);
@@ -185,6 +273,7 @@ internal sealed partial class MainWindow
         switch (plugin.Send(conversation, conversation.Draft))
         {
             case SendOutcome.Sent:
+                Sent(conversation.Draft);
                 store.SetDraft(conversation, string.Empty);
                 composerNotice = string.Empty;
 
@@ -234,25 +323,28 @@ internal sealed partial class MainWindow
 
     /// <summary>
     /// Puts text into a conversation's draft where the caret last was, or at
-    /// the end, and gives the box focus with the caret just after it.
+    /// the end, and gives the box focus with the caret just after it. With no
+    /// conversation, it goes into General's box instead.
     /// </summary>
-    private void InsertIntoDraft(Conversation conversation, string text)
+    private void InsertIntoDraft(Conversation? conversation, string text)
     {
-        var draft = conversation.Draft;
+        var key = conversation?.Key ?? GeneralKey;
+        var draft = conversation?.Draft ?? generalDraft;
         var at = draft.Length;
-        if (caretOwner != null && string.Equals(caretOwner, conversation.Key, StringComparison.Ordinal) && caretBytes >= 0)
+        if (caretOwner != null && string.Equals(caretOwner, key, StringComparison.Ordinal) && caretBytes >= 0)
             at = CharIndex(draft, caretBytes);
 
         // A space between the insertion and a word it would otherwise run into.
         if (at > 0 && !char.IsWhiteSpace(draft[at - 1]) && text.Length > 1 && !char.IsWhiteSpace(text[0])) text = " " + text;
 
         var updated = draft.Insert(at, text);
-        if (Encoding.UTF8.GetByteCount(updated) > MaxDraftLength) return;
+        if (Encoding.UTF8.GetByteCount(updated) > (conversation == null ? GeneralMaxBytes : MaxDraftLength)) return;
 
-        store.SetDraft(conversation, updated);
+        if (conversation == null) generalDraft = updated;
+        else store.SetDraft(conversation, updated);
         caretTarget = Encoding.UTF8.GetByteCount(updated.AsSpan(0, at + text.Length));
         caretBytes = caretTarget;
-        focusComposer = conversation.Key;
+        focusComposer = key;
     }
 
     /// <summary>The character index at a UTF-8 byte offset into a string, as ImGui counts the caret.</summary>

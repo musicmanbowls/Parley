@@ -11,8 +11,8 @@ namespace Parley.Ui;
 
 /// <summary>
 /// The chat window: a tab per kind of conversation along the top, the
-/// conversations of that kind down the side, and the selected one in the
-/// middle with a box to reply in.
+/// conversations of that kind as a row of tabs under those or a list down the
+/// side, and the selected one below with a box to reply in.
 ///
 /// The same class is also a popped-out window for one kind of conversation
 /// on its own, the free company say, with no tabs. Each window keeps its own
@@ -62,8 +62,20 @@ internal sealed partial class MainWindow : Window
 
     private const string WhicheverIsShown = "\0";
 
-    /// <summary>Whether this frame shows the list of conversations. The free company tab does without it when there is only the one.</summary>
+    /// <summary>Whether this frame shows the list of conversations down the side, rather than tabs or nothing at all.</summary>
     private bool showSidebar = true;
+
+    /// <summary>The look of the section on screen this frame: layout, times and size.</summary>
+    private SectionLook look = new();
+
+    /// <summary>With that setting on, the conversation list shows icons only rather than leave the conversation narrower than this (unscaled).</summary>
+    private const float MinPaneWidth = 420f;
+
+    /// <summary>Set each frame: the window is too narrow for the list's names, whatever the list was set to.</summary>
+    private bool listForcedNarrow;
+
+    /// <summary>The conversation list shows icons only: as set, or because the window is narrow.</summary>
+    private bool ListIconsOnly => config.SidebarCollapsed || listForcedNarrow;
 
     /// <summary>
     /// Set when the window was opened by something other than the user, such
@@ -86,6 +98,7 @@ internal sealed partial class MainWindow : Window
         fonts = plugin.Fonts;
         palette = theme.Palette;
         group = only ?? config.LastGroup;
+        generalShown = only == null && config.GeneralShown;
         Viewer = only is { } kind ? 1 + (int)kind : 0;
         placeCaret = PlaceCaret;
 
@@ -93,17 +106,10 @@ internal sealed partial class MainWindow : Window
         SizeCondition = ImGuiCond.FirstUseEver;
         SizeConstraints = new WindowSizeConstraints
         {
-            MinimumSize = new Vector2(only == null ? 540 : 420, 300),
+            MinimumSize = new Vector2(only == null ? 400 : 320, 240),
             MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
         };
 
-        TitleBarButtons.Add(new TitleBarButton
-        {
-            Icon = FontAwesomeIcon.Cog,
-            IconOffset = new Vector2(2, 1),
-            Click = _ => plugin.OpenSettings(),
-            ShowTooltip = () => ImGui.SetTooltip("Parley settings"),
-        });
     }
 
     /// <summary>The conversation currently shown, if the window has one selected.</summary>
@@ -145,6 +151,7 @@ internal sealed partial class MainWindow : Window
     public void StartTyping()
     {
         if (!IsOpen) return;
+        Summon();
         BringToFront();
         if (searching)
         {
@@ -183,7 +190,8 @@ internal sealed partial class MainWindow : Window
         else
         {
             var unread = only is { } kind ? store.NewestUnread(kind) : NewestUnreadShown();
-            if (!IsOpen && config.JumpToUnreadOnOpen && unread != null) Select(unread, focus);
+            // Someone who left the window on General opens it on General again.
+            if (!IsOpen && config.JumpToUnreadOnOpen && unread != null && !ShowingGeneral) Select(unread, focus);
             else focusComposer = focus && config.FocusInputOnOpen ? WhicheverIsShown : null;
         }
 
@@ -241,16 +249,13 @@ internal sealed partial class MainWindow : Window
         theme.Resolve();
         theme.Push();
 
-        var opacity = config.WindowOpacity;
-        if (theme.Themed) BgAlpha = theme.Palette.WindowBg.W * opacity;
-        else BgAlpha = opacity < 0.999f ? opacity : null;
+        // Flags, border, background opacity and fading; see MainWindow.Look.
+        // ImGui gives a window focus as it appears unless told not to.
+        ApplyLook();
 
         // Escape closing a popped-out window would only put it away; it is
         // the main window that Escape is for.
         RespectCloseHotkey = config.CloseWithEscape;
-
-        // ImGui gives a window focus as it appears unless told not to.
-        Flags = openQuietly ? BaseFlags | ImGuiWindowFlags.NoFocusOnAppearing : BaseFlags;
 
         var unread = UnreadShown();
         if (unread != titleUnread)
@@ -262,7 +267,11 @@ internal sealed partial class MainWindow : Window
         }
     }
 
-    public override void PostDraw() => theme.Pop();
+    public override void PostDraw()
+    {
+        PopLook();
+        theme.Pop();
+    }
 
     public override void Draw()
     {
@@ -270,12 +279,16 @@ internal sealed partial class MainWindow : Window
         // request not to take focus applies to.
         openQuietly = false;
 
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         lastDrawn = Environment.TickCount64;
         canReply = false;
         palette = theme.Palette;
         scale = ImGuiHelpers.GlobalScale;
         now = store.Now;
         today = (int)(TimeText.ToLocal(now).Date.Ticks / TimeSpan.TicksPerDay);
+
+        // Before Parley's font goes on: the title bar it leaves room for is in the window's own font.
+        if (config.SoftEdges) DrawSoftBackground();
 
         using var font = fonts.Push();
 
@@ -285,11 +298,23 @@ internal sealed partial class MainWindow : Window
         // Every region below unwinds what it pushed on to ImGui if it fails.
         try
         {
-            RefreshLayoutStamp();
+            // Menus anywhere in the window are drawn with ImGui's own spacing, whatever the sections push.
+            var style = ImGui.GetStyle();
+            normalPadding = style.WindowPadding;
+            normalSpacing = style.ItemSpacing;
+
             KeepGroupShown();
             HandleShortcuts();
             DrawGroupTabs();
             ResolveSelection();
+
+            // Below the tabs, everything is in the section's own look and size,
+            // text and spacing alike. The tabs stay put whichever is chosen.
+            look = config.LookFor(ShowingGeneral ? LookSection.General : Configuration.SectionOf(group));
+            scale = ImGuiHelpers.GlobalScale * look.Scale;
+            using var sectionFont = fonts.Push(look.Scale);
+            RefreshLayoutStamp();
+            listForcedNarrow = config.ShrinkListWhenNarrow && ImGui.GetContentRegionAvail().X - (config.SidebarWidth * scale) < MinPaneWidth * scale;
 
             if (!store.HasCharacter)
             {
@@ -303,21 +328,13 @@ internal sealed partial class MainWindow : Window
             {
                 DrawSearch(ImGui.GetContentRegionAvail().Y);
             }
+            else if (ShowingGeneral)
+            {
+                DrawGeneral(ImGui.GetContentRegionAvail().Y);
+            }
             else
             {
-                // A character is in one free company at most, so that tab
-                // only needs a list when there are old ones to choose from.
-                showSidebar = group != ChannelGroup.FreeCompany || store.InGroup(group).Count > 1;
-
-                var height = ImGui.GetContentRegionAvail().Y;
-                if (showSidebar)
-                {
-                    DrawSidebar(height);
-                    ImGui.SameLine(0f, 0f);
-                    DrawSplitter(height);
-                    ImGui.SameLine(0f, 0f);
-                }
-                DrawPane(height);
+                DrawConversations(ImGui.GetContentRegionAvail().Y);
             }
 
             DrawNewTellPopup();
@@ -340,9 +357,11 @@ internal sealed partial class MainWindow : Window
         // attention: focus, or the cursor over it. A window merely left open
         // beside the game does not swallow new messages; they count as unread
         // until the user comes back to it.
-        var reading = selected != null && !searching && (config.ReadWhenVisible || IsFocused || IsHovered);
+        var reading = selected != null && !searching && !ShowingGeneral && (config.ReadWhenVisible || IsFocused || IsHovered);
         store.SetViewed(Viewer, reading ? selected!.Key : null);
         if (reading && selected!.Unread > 0) store.MarkRead(selected);
+
+        plugin.NoteSlowWork("drawing its window", started);
     }
 
     // ------------------------------------------------------------------
@@ -351,6 +370,7 @@ internal sealed partial class MainWindow : Window
 
     private void Select(Conversation conversation, bool focus)
     {
+        ShowGeneral(false);
         store.Reopen(conversation);
         SwitchGroup(conversation.Group);
         selectedKeys[(int)group] = conversation.Key;
@@ -405,6 +425,12 @@ internal sealed partial class MainWindow : Window
     /// <summary>Moves the selection along the open tab's list, wrapping round at either end.</summary>
     private void Cycle(int step)
     {
+        if (ShowingGeneral)
+        {
+            CycleGeneralTab(step);
+            return;
+        }
+
         if (!store.HasCharacter || !Shows(group)) return;
 
         var list = store.InGroup(group);

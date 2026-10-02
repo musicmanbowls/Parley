@@ -92,6 +92,13 @@ internal static partial class Scenarios
         new("25-pop-out", PopOut),
         new("26-friends", Friends),
         new("27-game-themes", GameThemeLooks),
+        new("28-general", GeneralChat),
+        new("29-window-look", WindowLook),
+        new("30-chat-hides", ChatHides),
+        new("31-section-looks", SectionLooks),
+        new("32-auto-translate", AutoTranslatePicker),
+        new("33-conversation-tabs", ConversationTabs),
+        new("34-general-tab-buttons", GeneralTabButtons),
     ];
 
     public static int RunAll(string output, string assets, string? filter)
@@ -247,6 +254,7 @@ internal static partial class Scenarios
     private static void Sidebar(Scenario s)
     {
         Demo.Seed(s.Stage);
+        s.Config.MainWindowTabs = TabDirection.Vertical;
         s.Config.JumpToUnreadOnOpen = false;
         s.Open(s.Tell("Mira Thorne"));
         s.Store.SetPinned(s.Tell("Yuna Hoshizora"), true);
@@ -263,7 +271,7 @@ internal static partial class Scenarios
         s.Config.SidebarPreviews = true;
         s.Stage.ClickIcon(FontAwesomeIcon.AngleDoubleLeft);
         s.Shot("collapsed");
-        s.Check(s.Config.SidebarCollapsed, "the arrow in the header shrinks the list");
+        s.Check(s.Config.SidebarCollapsed, "the arrow at the foot of the list shrinks it");
         s.Check(s.Stage.FindIcon(FontAwesomeIcon.AngleDoubleRight) != null, "and turns round to bring it back");
 
         s.Stage.ClickIcon(FontAwesomeIcon.AngleDoubleRight);
@@ -313,7 +321,7 @@ internal static partial class Scenarios
         s.Config.JumpToUnreadOnOpen = false;
         s.Open(s.Tell("Mira Thorne"));
         s.Shot();
-        s.Check(s.Stage.Find("on my way") != null, "the conversation is laid out at a larger UI scale");
+        s.Check(s.Stage.Find("hey, are you around tonight?") != null, "the conversation is laid out at a larger UI scale");
     }
 
     private static void Empty(Scenario s)
@@ -325,7 +333,7 @@ internal static partial class Scenarios
         s.Store.LoadCharacter(0x0040000012345678, s.Plugin.LocalName, "Jenova", saveHistory: false);
         s.Stage.Frames(3);
         s.Shot("no-conversations");
-        s.Check(s.Stage.Find("No tells yet") != null, "with no conversations, the list explains how to start one");
+        s.Check(s.Stage.Find("No tells yet") != null, "with no conversations, the window explains how to start one");
 
         s.Stage.ClickText("Linkshells");
         s.Shot("no-linkshells");
@@ -401,17 +409,8 @@ internal static partial class Scenarios
         return send.Max.X - 12f;
     }
 
-    /// <summary>A piece of text in the message list, as opposed to the same words in the sidebar's preview.</summary>
-    private static TextRun? InList(Scenario s, string text)
-    {
-        // The header's collapse arrow sits at the left edge of the conversation, just past the sidebar.
-        var left = s.Stage.NeedIcon(FontAwesomeIcon.AngleDoubleLeft).Min.X;
-        foreach (var run in s.Stage.Text)
-        {
-            if (!run.Icon && run.Visible && run.Min.X > left && run.Text == text) return run;
-        }
-        return null;
-    }
+    /// <summary>A piece of text in the message list. With tabs across the top there are no previews, so that is the only place it can be.</summary>
+    private static TextRun? InList(Scenario s, string text) => s.Stage.FindExact(text);
 
     private static void NewTell(Scenario s)
     {
@@ -453,7 +452,7 @@ internal static partial class Scenarios
 
         s.Stage.ClickText("Old Friends", button: 1);
         s.Shot("row-menu");
-        s.Check(s.Stage.Find("Pin to top") != null, "right-clicking a row opens its menu");
+        s.Check(s.Stage.Find("Pin to top") != null, "right-clicking a tab opens its menu");
         s.Check(s.Stage.Find("Delete conversation") != null, "a linkshell the character has left can be deleted");
 
         s.Stage.ClickText("Pin to top");
@@ -469,8 +468,8 @@ internal static partial class Scenarios
         s.Shot("tell-from-menu");
 
         s.Open(s.Shell(ChannelGroup.Linkshell, "Moonlit Anglers"));
-        s.Stage.ClickIcon(FontAwesomeIcon.EllipsisV);
-        s.Shot("header-menu");
+        s.Stage.ClickText("Moonlit Anglers", button: 1);
+        s.Shot("tab-menu");
         s.Stage.ClickText("Clear history");
         s.Shot("confirm");
         s.Check(s.Stage.Find("Clear the history of Moonlit Anglers?") != null, "clearing history asks first");
@@ -478,7 +477,7 @@ internal static partial class Scenarios
         s.Stage.ClickText("Cancel");
         s.Check(s.Shell(ChannelGroup.Linkshell, "Moonlit Anglers").Messages.Count > 0, "cancelling keeps the messages");
 
-        s.Stage.ClickIcon(FontAwesomeIcon.EllipsisV);
+        s.Stage.ClickText("Moonlit Anglers", button: 1);
         s.Stage.ClickText("Clear history");
         s.Stage.ClickText("Clear", occurrence: 1);
         s.Check(s.Shell(ChannelGroup.Linkshell, "Moonlit Anglers").Messages.Count == 0, "confirming removes them");
@@ -611,6 +610,13 @@ internal static partial class Scenarios
         }
 
         s.Stage.ClickText("Appearance");
+        s.Stage.ClickText("Layout, tabs and size");
+        s.Stage.Frames(2);
+        s.Shot("layout-tabs-and-size");
+        s.Check(s.Stage.Find("Tabs in the main window") != null && s.Stage.Find("Horizontal: tabs across the top") != null, "the tabs are set under Layout, tabs and size, horizontal in the main window to begin with");
+        s.Check(s.Stage.Find("Vertical: a list down the side") != null, "and vertical when popped out");
+
+        s.Stage.ClickText("Appearance");
         s.Config.Theme = ThemeMode.Custom;
         s.Config.CustomColours = Core.Theme.GameThemes.For(Core.Theme.GameThemes.Dark).ToHex();
         s.Plugin.Theme.InvalidateCustom();
@@ -693,7 +699,7 @@ internal static partial class Scenarios
         s.Shot();
         s.Check(ReferenceEquals(s.Plugin.MainWindow.Selected, company), "the tab opens on the free company");
         s.Check(company.Unread == 0, "and reads it");
-        s.Check(s.Stage.FindIcon(FontAwesomeIcon.AngleDoubleLeft) == null, "with only one free company there is no list beside it");
+        s.Check(s.Stage.FindIcon(FontAwesomeIcon.UserCircle) == null && s.Stage.FindIcon(FontAwesomeIcon.AngleDoubleLeft) == null, "with only one free company there are no tabs or list to choose from");
         s.Check(s.Stage.Find("FC map run at 9") != null, "its messages are shown");
 
         s.Stage.Type("I'll bring the maps");
@@ -709,7 +715,7 @@ internal static partial class Scenarios
         Demo.Theirs(s.Store, next, s.Stage.Clock, "Rook Ashdown", Demo.Faerie, "welcome aboard!");
         s.Stage.Frames(3);
         s.Shot("two-companies");
-        s.Check(s.Stage.FindIcon(FontAwesomeIcon.AngleDoubleLeft) != null, "with an old free company to go back to, the list is shown");
+        s.Check(s.Stage.FindIcon(FontAwesomeIcon.UserCircle) != null, "with an old free company to go back to, there are tabs to choose between them");
         s.Check(s.Stage.Find("Sunset Cartel") != null && s.Stage.Find("Lanternlight Soc") != null, "listing both");
         s.Check(s.Stage.Find("no longer in this free company") != null, "the old one cannot be written to, and says why");
     }
@@ -799,6 +805,9 @@ internal static partial class Scenarios
         s.Plugin.OpenSettings();
         s.Stage.Frames(3);
         s.Stage.ClickText("Appearance");
+        s.Stage.Frames(2);
+        s.Check(s.Stage.Find("Picked for particular people") == null, "the settings start with their sections closed");
+        s.Stage.ClickText("Names");
         s.Stage.Frames(2);
         s.Shot("settings");
         s.Check(s.Stage.Find("Picked for particular people") != null, "the settings list the colours that have been picked");

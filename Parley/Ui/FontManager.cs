@@ -5,57 +5,74 @@ using Parley.Core.Settings;
 namespace Parley.Ui;
 
 /// <summary>
-/// The font the chat window draws in, when that is not simply Dalamud's
-/// default at its default size. Built through Dalamud's font atlas so it is
-/// rasterised at the size asked for rather than scaled up and blurred.
+/// The fonts the chat window draws in, when that is not simply Dalamud's
+/// default at its default size. Built through Dalamud's font atlas so each is
+/// rasterised at the size asked for rather than scaled up and blurred. A
+/// section of the window with a size of its own gets a font of its own, built
+/// the first time it is asked for.
 /// </summary>
 internal sealed class FontManager : IDisposable
 {
-    private IFontHandle? handle;
+    /// <summary>Fonts by size, in hundredths of the default size. Null where building one failed.</summary>
+    private readonly Dictionary<int, IFontHandle?> handles = [];
     private FontChoice builtChoice;
     private float builtScale = -1f;
 
     /// <summary>Goes up each time the font changes, so text measured in the old one is measured again.</summary>
     public int Generation { get; private set; }
 
-    /// <summary>Rebuilds the font if the settings ask for a different one. Cheap when they do not.</summary>
+    /// <summary>Starts again with the fonts the settings ask for. Cheap when nothing has changed.</summary>
     public void Apply(Configuration config)
     {
         if (builtScale >= 0f && config.Font == builtChoice && MathF.Abs(config.FontScale - builtScale) < 0.001f) return;
 
-        handle?.Dispose();
-        handle = null;
+        DisposeHandles();
         builtChoice = config.Font;
         builtScale = config.FontScale;
         Generation++;
+    }
 
-        // The default font at the default size needs no handle of its own.
-        if (config.Font == FontChoice.Dalamud && MathF.Abs(config.FontScale - 1f) < 0.01f) return;
+    /// <summary>
+    /// Makes the chat font current, at <paramref name="sectionScale"/> times
+    /// the size set for text, until the result is disposed. Null while that
+    /// font is still being built, or when Dalamud's default fits as it is.
+    /// </summary>
+    public IDisposable? Push(float sectionScale = 1f)
+    {
+        var scale = builtScale * sectionScale;
+        if (builtChoice == FontChoice.Dalamud && MathF.Abs(scale - 1f) < 0.01f) return null;
 
+        var key = (int)MathF.Round(scale * 100f);
+        if (!handles.TryGetValue(key, out var handle))
+        {
+            handle = Build(builtChoice, key / 100f);
+            handles[key] = handle;
+        }
+        return handle is { Available: true } ? handle.Push() : null;
+    }
+
+    public void Dispose() => DisposeHandles();
+
+    private static IFontHandle? Build(FontChoice choice, float scale)
+    {
         try
         {
             var builder = Services.PluginInterface.UiBuilder;
-            var size = builder.FontDefaultSizePx * config.FontScale;
-            handle = config.Font == FontChoice.GameAxis
+            var size = builder.FontDefaultSizePx * scale;
+            return choice == FontChoice.GameAxis
                 ? builder.FontAtlas.NewGameFontHandle(new GameFontStyle(GameFontFamily.Axis, size))
                 : builder.FontAtlas.NewDelegateFontHandle(toolkit => toolkit.OnPreBuild(pre => pre.AddDalamudDefaultFont(size)));
         }
         catch (Exception ex)
         {
             Services.Log.Warning(ex, "Could not build the chat font; using Dalamud's default.");
-            handle = null;
+            return null;
         }
     }
 
-    /// <summary>
-    /// Makes the chat font current until the result is disposed. Null while
-    /// the font is still being built, or when the default is in use.
-    /// </summary>
-    public IDisposable? Push() => handle is { Available: true } ? handle.Push() : null;
-
-    public void Dispose()
+    private void DisposeHandles()
     {
-        handle?.Dispose();
-        handle = null;
+        foreach (var handle in handles.Values) handle?.Dispose();
+        handles.Clear();
     }
 }

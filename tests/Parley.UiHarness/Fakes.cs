@@ -169,6 +169,94 @@ namespace Parley
         internal SendOutcome Send(Conversation conversation, string text) =>
             Store.HasCharacter ? Outgoing.Send(conversation, text) : SendOutcome.CannotSend;
 
+        // ---- General ----
+
+        internal GeneralLog General { get; } = new();
+
+        /// <summary>The game's number for the channel its chat box is on, as a test sets it. 2 is Party.</summary>
+        internal int ChannelId { get; set; } = 2;
+
+        internal string TellTo { get; set; } = string.Empty;
+
+        /// <summary>Every line typed into General's box, in order.</summary>
+        internal List<string> SentGeneral { get; } = [];
+
+        internal (ChatChannel? Channel, string Label, string TellTo) CurrentChannel() =>
+            ChannelId == ChatChannels.TellId ? (null, "/tell", TellTo) : (ChatChannels.ById(ChannelId), string.Empty, string.Empty);
+
+        /// <summary>The default Log Text Colors of a few kinds of line; the rest have none, so fall back to the text colour.</summary>
+        internal System.Numerics.Vector4? ChatColour(int kind) => kind switch
+        {
+            10 => Core.Theme.ColourMath.FromRgb(0xF7F7F7),
+            12 or 13 => Core.Theme.ColourMath.FromRgb(0xFFB8DE),
+            14 or 32 => Core.Theme.ColourMath.FromRgb(0x66E5FF),
+            24 => Core.Theme.ColourMath.FromRgb(0xABDBE5),
+            16 => Core.Theme.ColourMath.FromRgb(0xD4FF7D),
+            56 => Core.Theme.ColourMath.FromRgb(0xCCCCCC),
+            57 => Core.Theme.ColourMath.FromRgb(0xCCCCB2),
+            61 => Core.Theme.ColourMath.FromRgb(0xABD647),
+            _ => null,
+        };
+
+        // A little of the game's auto-translate dictionary.
+        private static readonly AutoTranslateGroup[] AtGroups = [new(2, "Greetings"), new(8, "Tactics"), new(49, "Mounts")];
+        private static readonly AutoTranslatePhrase[] AtPhrases =
+        [
+            new(2, 1, "Hello."), new(2, 2, "Good morning!"), new(2, 3, "Nice to meet you."), new(2, 4, "Thank you."),
+            new(8, 1, "Pull together!"), new(8, 2, "Stack up!"), new(8, 3, "Spread out!"),
+            new(49, 1, "Company Chocobo"), new(49, 2, "Midgardsormr"),
+        ];
+
+        internal IReadOnlyList<AutoTranslateGroup> AutoTranslateGroups() => AtGroups;
+        internal IReadOnlyList<AutoTranslatePhrase> AutoTranslatePhrases(uint group) => AtPhrases.Where(phrase => phrase.Group == group).ToList();
+        internal IReadOnlyList<AutoTranslatePhrase> AutoTranslateAll() => AtPhrases;
+        internal string AutoTranslateToken(AutoTranslatePhrase phrase) => "" + phrase.Text.Replace(' ', ' ') + "";
+
+        /// <summary>Whether Parley stands in for the game's chat, as a test sets it.</summary>
+        internal bool ReplacingGameChat { get; set; }
+
+        /// <summary>Whether the game's chat would be out of sight, as in a cutscene, as a test sets it.</summary>
+        internal bool ChatHidden { get; set; }
+
+        internal bool GameChatWouldHide() => ChatHidden;
+
+        /// <summary>How often General's "+" asked the game for another tab, and its cog for the game's log settings.</summary>
+        internal int TabsAsked { get; private set; }
+        internal int LogSettingsOpened { get; private set; }
+
+        /// <summary>Whether the game's chat log can be reached, as a test sets it. Without it "+" has nowhere to go.</summary>
+        internal bool GameChatReachable { get; set; } = true;
+
+        internal bool AddGameChatTab()
+        {
+            if (!GameChatReachable) return false;
+            TabsAsked++;
+            return true;
+        }
+
+        internal bool OpenGameLogSettings()
+        {
+            LogSettingsOpened++;
+            return true;
+        }
+
+        internal void NoteSlowWork(string what, long started) { }
+
+        internal List<string> SentHistory { get; } = [];
+
+        internal void RecordSent(string text)
+        {
+            var line = text.Trim();
+            if (line.Length > 0 && (SentHistory.Count == 0 || SentHistory[^1] != line)) SentHistory.Add(line);
+        }
+
+        internal bool SendGeneral(string text)
+        {
+            if (!Store.HasCharacter || string.IsNullOrWhiteSpace(text)) return false;
+            SentGeneral.Add(text.Trim());
+            return true;
+        }
+
         internal void SaveConfig() => ConfigSaves++;
 
         internal void ApplyConfig()
@@ -397,7 +485,7 @@ namespace Parley.Ui
 
         public void Apply(Configuration config) { }
 
-        public IDisposable? Push() => null;
+        public IDisposable? Push(float sectionScale = 1f) => null;
 
         public void Dispose() { }
     }

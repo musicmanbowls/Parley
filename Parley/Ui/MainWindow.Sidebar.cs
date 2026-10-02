@@ -23,6 +23,9 @@ internal sealed partial class MainWindow
         public FitCache Title;
         public FitCache Preview;
 
+        /// <summary>The name on the conversation's tab, when tabs are used instead of the list.</summary>
+        public FitCache Tab;
+
         // The time beside the name.
         public long StampActivity = -1;
         public int StampDay;
@@ -48,11 +51,15 @@ internal sealed partial class MainWindow
         public Vector4 NameColour;
     }
 
-    /// <summary>The list of conversations down the left: one row each, newest or lowest slot first.</summary>
+    /// <summary>
+    /// The list of conversations down the left: one row each, newest or
+    /// lowest slot first, and under them the button that shrinks the list to
+    /// pictures and back.
+    /// </summary>
     private void DrawSidebar(float height)
     {
         var lineHeight = ImGui.GetTextLineHeight();
-        var collapsed = config.SidebarCollapsed;
+        var collapsed = ListIconsOnly;
         var padding = 4f * scale;
 
         var width = collapsed
@@ -64,30 +71,16 @@ internal sealed partial class MainWindow
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(padding, padding));
         ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(0f, 2f * scale));
         ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, 6f * scale);
-        // Shrunk to a column of avatars there is no room for a scrollbar beside
-        // them. The wheel still scrolls the list.
-        var flags = ImGuiWindowFlags.AlwaysUseWindowPadding;
-        if (collapsed) flags |= ImGuiWindowFlags.NoScrollbar;
-        var visible = ImGui.BeginChild("##sidebar", new Vector2(width, height), false, flags);
+        var visible = ImGui.BeginChild("##sidebar", new Vector2(width, height), false,
+            ImGuiWindowFlags.AlwaysUseWindowPadding | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
 
         try
         {
             if (visible)
             {
-                var list = store.InGroup(group);
-                var rowWidth = ImGui.GetContentRegionAvail().X;
-
-                if (list.Count == 0 && !collapsed)
-                {
-                    DrawSidebarEmpty(rowWidth);
-                }
-                else
-                {
-                    // A row's menu can close or delete a conversation. That only
-                    // marks the list for rebuilding on the next InGroup call, so
-                    // this copy is stable for the length of the loop.
-                    for (var i = 0; i < list.Count; i++) DrawRow(list[i], rowWidth, collapsed);
-                }
+                var toggle = ImGui.GetFrameHeight();
+                DrawSidebarRows(collapsed, MathF.Max(1f, ImGui.GetContentRegionAvail().Y - toggle - (4f * scale)));
+                DrawListToggle(collapsed, toggle);
             }
         }
         finally
@@ -95,6 +88,49 @@ internal sealed partial class MainWindow
             ImGui.EndChild();
             ImGui.PopStyleVar(3);
             ImGui.PopStyleColor();
+        }
+    }
+
+    private void DrawSidebarRows(bool collapsed, float height)
+    {
+        // Shrunk to a column of avatars there is no room for a scrollbar beside
+        // them. The wheel still scrolls the list.
+        ImGui.PushStyleColor(ImGuiCol.ChildBg, Vector4.Zero);
+        var visible = ImGui.BeginChild("##rows", new Vector2(0f, height), false, collapsed ? ImGuiWindowFlags.NoScrollbar : ImGuiWindowFlags.None);
+        try
+        {
+            if (!visible) return;
+
+            var list = store.InGroup(group);
+            var rowWidth = ImGui.GetContentRegionAvail().X;
+            if (list.Count == 0 && !collapsed)
+            {
+                DrawSidebarEmpty(rowWidth);
+                return;
+            }
+
+            // A row's menu can close or delete a conversation. That only
+            // marks the list for rebuilding on the next InGroup call, so
+            // this copy is stable for the length of the loop.
+            for (var i = 0; i < list.Count; i++) DrawRow(list[i], rowWidth, collapsed);
+        }
+        finally
+        {
+            ImGui.EndChild();
+            ImGui.PopStyleColor();
+        }
+    }
+
+    /// <summary>At the foot of the list: shrink it to pictures, or bring the names back. Double-clicking the divider does the same.</summary>
+    private void DrawListToggle(bool collapsed, float size)
+    {
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + (2f * scale));
+        var tip = listForcedNarrow ? "The window is too narrow for names, so the list shows pictures.\nWiden the window to see them, or turn this off under Appearance."
+            : collapsed ? "Show the names" : "Shrink the list to pictures";
+        if (Painter.IconButton("##collapse", collapsed ? FontAwesomeIcon.AngleDoubleRight : FontAwesomeIcon.AngleDoubleLeft, tip, palette, size, enabled: !listForcedNarrow))
+        {
+            config.SidebarCollapsed = !collapsed;
+            plugin.SaveConfig();
         }
     }
 
@@ -144,41 +180,24 @@ internal sealed partial class MainWindow
             if (isSelected) drawList.AddRectFilled(min, max, Painter.U32(palette.RowSelected), 6f * scale);
             else if (hovered) drawList.AddRectFilled(min, max, Painter.U32(palette.RowHover), 6f * scale);
 
-            var friend = conversation.IsTell && config.ShowFriendStatus
-                ? plugin.FriendStatus(conversation.Title, conversation.WorldId)
-                : FriendStatus.None;
+            var friend = FriendOf(conversation);
 
             var centre = new Vector2(min.X + (6f * scale) + radius, min.Y + (rowHeight * 0.5f));
             DrawAvatar(drawList, conversation, cache, centre, radius, friend);
-            if (friend.IsFriend)
-            {
-                DrawPresence(drawList, centre, radius, friend);
-                if (hovered && !collapsed && Vector2.Distance(ImGui.GetIO().MousePos, centre) <= radius + (3f * scale))
-                    ImGui.SetTooltip($"On your friend list\n{friend.DescribeWithPlace(conversation.WorldId)}");
-            }
+            if (friend.IsFriend) DrawPresence(drawList, centre, radius, friend, palette.SidebarBg);
 
             if (collapsed)
             {
                 // No room for a count, so an unread conversation gets a dot on its avatar.
-                if (conversation.Unread > 0)
-                {
-                    var dot = new Vector2(centre.X + (radius * 0.72f), centre.Y - (radius * 0.72f));
-                    drawList.AddCircleFilled(dot, 5f * scale, Painter.U32(palette.SidebarBg with { W = 1f }));
-                    drawList.AddCircleFilled(dot, 3.6f * scale, Painter.U32(palette.Badge));
-                }
-
-                if (hovered)
-                {
-                    var presence = friend.IsFriend ? $"\n{friend.DescribeWithPlace(conversation.WorldId)}" : string.Empty;
-                    if (conversation.Unread > 0) ImGui.SetTooltip($"{conversation.DisplayName}{presence}\n{conversation.Unread} unread");
-                    else ImGui.SetTooltip(conversation.DisplayName + presence);
-                }
+                if (conversation.Unread > 0) DrawUnreadDot(drawList, centre, radius, palette.SidebarBg);
             }
             else
             {
                 DrawRowText(drawList, conversation, cache, centre.X + radius + (8f * scale), max.X - (8f * scale), min.Y, rowHeight, twoLine, isSelected, friend);
             }
 
+            // Who it is with, their world and whereabouts: the banner, while pointed at.
+            if (hovered) DrawBanner(conversation, friend);
             DrawRowMenu(conversation);
         }
         finally
@@ -311,11 +330,12 @@ internal sealed partial class MainWindow
     /// a do-not-disturb sign (red, with a dark bar across it) for someone who
     /// has set themselves busy, and a grey ring when offline.
     /// </summary>
-    private void DrawPresence(ImDrawListPtr drawList, Vector2 centre, float radius, FriendStatus friend)
+    /// <param name="background">What the avatar sits on, for the ring that sets the dot apart from it.</param>
+    private void DrawPresence(ImDrawListPtr drawList, Vector2 centre, float radius, FriendStatus friend, Vector4 background)
     {
         var dot = new Vector2(centre.X + (radius * 0.72f), centre.Y + (radius * 0.72f));
         var size = MathF.Max(4f * scale, radius * 0.34f);
-        drawList.AddCircleFilled(dot, size + (1.5f * scale), Painter.U32(palette.SidebarBg with { W = 1f }));
+        drawList.AddCircleFilled(dot, size + (1.5f * scale), Painter.U32(background with { W = 1f }));
 
         if (!friend.Online)
         {
@@ -323,8 +343,7 @@ internal sealed partial class MainWindow
             return;
         }
 
-        var colour = friend.Busy || friend.InDuty ? PresenceRed : friend.Away ? PresenceAway : PresenceOnline;
-        drawList.AddCircleFilled(dot, size, Painter.U32(colour), 16);
+        drawList.AddCircleFilled(dot, size, Painter.U32(PresenceColour(friend)), 16);
 
         if (friend.Busy)
         {
@@ -336,6 +355,9 @@ internal sealed partial class MainWindow
                 Painter.U32(DoNotDisturbBar), halfHeight);
         }
     }
+
+    private static Vector4 PresenceColour(FriendStatus friend) =>
+        friend.Busy || friend.InDuty ? PresenceRed : friend.Away ? PresenceAway : PresenceOnline;
 
     private static readonly Vector4 PresenceOnline = ColourMath.FromRgb(0x43B75F);
     private static readonly Vector4 PresenceAway = ColourMath.FromRgb(0xE3A33A);
@@ -459,12 +481,12 @@ internal sealed partial class MainWindow
 
         if (hovered || active) ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeEw);
 
-        if (hovered && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+        if (hovered && !listForcedNarrow && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
         {
             config.SidebarCollapsed = !config.SidebarCollapsed;
             plugin.SaveConfig();
         }
-        else if (active && !config.SidebarCollapsed)
+        else if (active && !ListIconsOnly)
         {
             var delta = ImGui.GetIO().MouseDelta.X;
             if (delta != 0f)
